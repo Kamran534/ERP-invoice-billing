@@ -1,0 +1,313 @@
+# Local stack for the invoice & billing platform.
+#
+#   docker compose up -d --wait          # postgres + redis + mailpit + adminer + api
+#   docker compose --profile obs up -d   # + prometheus + grafana
+#   docker compose --profile perf run --rm k6 run /scripts/login.js
+#
+# Every long-running service has a healthcheck so `--wait` and `depends_on`
+# actually mean "ready", not just "process started".
+
+name: billing
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ── Database ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    container_name: billing-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_dev_password
+      POSTGRES_DB: billing
+      # Faster, deterministic collation + checksums for a dev DB that mirrors prod.
+      POSTGRES_INITDB_ARGS: "--data-checksums --locale-provider=icu --icu-locale=en-US"
+      TZ: UTC
+      PGTZ: UTC
+    command:
+      - postgres
+      # Connection ceiling. Keep (replicas × DB_POOL_MAX) well under this.
+      - -c
+      - max_connections=200
+      # Memory — tuned for a dev box with ~4 GiB to spare; see README "Scaling".
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      # SSD-shaped planner costs; the defaults assume spinning rust.
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      # WAL / checkpoint smoothing — avoids write stalls under burst load.
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_completion_target=0.9
+      # Observability: slow-query log + per-statement stats for real tuning.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+      - -c
+      - log_min_duration_statement=200
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_checkpoints=on
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Extensions the auth schema needs (citext, pgcrypto) + pg_stat_statements.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d billing -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+    logging: *default-logging
+
+  # ── Cache / rate limiter / revocation set ──────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: billing-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      # volatile-lru, NOT allkeys-lru: every key we set has a TTL, and evicting
+      # a key without one (should we ever add one) would silently break the
+      # rate limiter or the revocation cache. Plan §5.5.9 / §8.2.
+      - --maxmemory-policy
+      - volatile-lru
+      - --save
+      - ""
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 384M
+    logging: *default-logging
+
+  # ── Mail catcher (SMTP sink + web UI + REST API) ───────────────────────────
+  # Nothing ever leaves the machine. The API talks SMTP to :1025; you read the
+  # mail at http://localhost:8025. The smoke test asserts delivery via its API.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: billing-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+      MP_MAX_MESSAGES: 5000
+      MP_DATABASE: /data/mailpit.db
+      TZ: UTC
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"   # SMTP
+      - "${MAILPIT_HTTP_PORT:-8025}:8025"   # web UI + REST API
+    volumes:
+      - mailpitdata:/data
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging: *default-logging
+
+  # ── DB browser (dev convenience) ───────────────────────────────────────────
+  adminer:
+    image: adminer:5
+    container_name: billing-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: dracula
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 192M
+    logging: *default-logging
+
+  # ── The API itself ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      target: runtime
+    container_name: billing-api
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # This is a *development* stack that happens to run the production image.
+      # NODE_ENV=production would (correctly) refuse to boot here, because the
+      # boot-time production audit in apps/api/src/env.ts rejects an http://
+      # APP_ORIGIN and warns about public Swagger. The Dockerfile still defaults
+      # to NODE_ENV=production, so a real deploy gets the strict behaviour unless
+      # it explicitly opts out. To exercise those checks locally:
+      #   docker compose run --rm -e NODE_ENV=production api
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 3000
+      LOG_PRETTY: "false"
+      # Service names, not localhost — these override anything in .env
+      DATABASE_URL: postgres://app:app_dev_password@postgres:5432/billing
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MAILPIT_API_URL: http://mailpit:8025
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+      # Fails fast with a readable message if .env has no key. Generate one with:
+      #   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+      AUTH_KEK: "${AUTH_KEK:?AUTH_KEK is required - see .env.example}"
+      JWT_ISSUER: http://localhost:3000
+      SWAGGER_ENABLED: "true"
+      TRUST_PROXY: "true"
+      # Must be >= HASH_MAX_CONCURRENCY or argon2 queues behind libuv's default 4.
+      UV_THREADPOOL_SIZE: 8
+      HASH_MAX_CONCURRENCY: 8
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:3000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    deploy:
+      # Horizontal scaling works out of the box — the API holds no session state.
+      #   docker compose up -d --scale api=3   (remove the fixed host port first)
+      replicas: 1
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+    logging: *default-logging
+
+  # ── Observability profile ──────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: billing-prometheus
+    profiles: ["obs"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: billing-grafana
+    profiles: ["obs"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    logging: *default-logging
+
+  # ── Load-test profile ─────────────────────────────────────────────────────
+  k6:
+    image: grafana/k6:latest
+    container_name: billing-k6
+    profiles: ["perf"]
+    environment:
+      BASE_URL: http://api:3000
+    volumes:
+      - ./load/k6:/scripts:ro
+    entrypoint: ["k6"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  mailpitdata:
+  prometheusdata:
+  grafanadata:
+
+networks:
+  default:
+    name: billing-net

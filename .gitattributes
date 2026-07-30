@@ -1,0 +1,37 @@
+# Normalise line endings in the repository to LF.
+#
+# Without this, files authored on Windows land in the repo with CRLF, and a CRLF
+# Dockerfile or shell script fails inside a Linux container with errors that point
+# nowhere near the real cause. Working trees still get native endings on checkout.
+* text=auto eol=lf
+
+# Files that must keep CRLF to run on Windows.
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Files that must keep LF regardless of platform.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+
+# Binary — never diff or normalise.
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+
+# Generated. Collapsed in GitHub diffs and excluded from language statistics, but
+# still diffable when you ask — a lockfile change is sometimes exactly what you
+# need to read.
+pnpm-lock.yaml              linguist-generated=true
+packages/db/migrations/**   linguist-generated=true
+
+# The committed OpenAPI document is a contract baseline: CI regenerates it and
+# fails on a diff. Deliberately NOT marked generated — a change to it is a change
+# to the public API and must be reviewed, not collapsed.
+apps/api/openapi/openapi.json  text eol=lf
+
+# GitHub's language stats otherwise report this as a Markdown project.
+docs/**  linguist-documentation

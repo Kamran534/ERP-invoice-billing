@@ -1,0 +1,35 @@
+{
+  // Test files are excluded from every package's build tsconfig so they never
+  // reach dist/ — which would otherwise leave them entirely untypechecked. This
+  // config exists to typecheck them.
+  //
+  //   pnpm typecheck   (runs the per-package builds, then this)
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "incremental": false,
+    "types": ["node"],
+
+    // Resolve workspace packages to SOURCE, matching the aliases in
+    // vitest.config.ts. Without this, typechecking a test would depend on a
+    // previous build and could pass against a stale dist/.
+    "baseUrl": ".",
+    "paths": {
+      "@auth/core": ["packages/core/src/index.ts"],
+      "@auth/crypto": ["packages/crypto/src/index.ts"],
+      "@auth/db": ["packages/db/src/index.ts"],
+      "@auth/mail": ["packages/mail/src/index.ts"],
+      "@auth/testing": ["packages/testing/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.test.ts",
+    "packages/*/src/**/*.int.test.ts",
+    "apps/*/src/**/*.e2e.test.ts",
+    "test/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

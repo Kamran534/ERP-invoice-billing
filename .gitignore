@@ -1,0 +1,39 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# env — .env.example is committed, real env files never are
+.env
+.env.*
+!.env.example
+
+# Obsidian — share the vault settings, not per-user state.
+# app.json / core-plugins.json / graph.json / templates.json are committed so the
+# team gets the same vault behaviour; the rest is local pane layout and caches.
+docs/.obsidian/workspace.json
+docs/.obsidian/workspace-mobile.json
+docs/.obsidian/cache
+docs/.obsidian/plugins/*/data.json
+.trash/
+
+# runtime / local
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# docker volumes bind-mounted locally (if you switch from named volumes)
+.data/
+
+# An empty vault Obsidian creates if you use "Create new vault" (name + location
+# get concatenated) instead of "Open folder as vault". Harmless but not ours —
+# better deleted than committed. The real vault is docs/.
+/invoice & billing/

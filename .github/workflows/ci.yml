@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the older run. Not for main, where every
+# commit's result is worth having.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: '24'
+  PNPM_VERSION: '11.9.0'
+
+jobs:
+  # ── Everything that needs no infrastructure ────────────────────────────────
+  # Split out so a typo fails in ~1 minute instead of after containers boot.
+  static:
+    name: Build, typecheck, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck (packages and test files)
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      # Broken wikilinks, renamed notes, edited headings, links that wrap across a
+      # line. Cheap, and the vault is the project's memory.
+      - name: Documentation links
+        run: pnpm docs:check
+
+  # ── Everything that needs Postgres, Redis and SMTP ─────────────────────────
+  integration:
+    name: Integration, e2e and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # docker compose, not GitHub service containers, and deliberately so: our
+      # Postgres needs shared_preload_libraries=pg_stat_statements and the init SQL
+      # that creates citext — service containers cannot run either. Using the same
+      # compose file means CI tests the database developers actually run.
+      - name: Write .env
+        run: |
+          cp .env.example .env
+          KEK=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+          sed -i "s|^AUTH_KEK=.*|AUTH_KEK=${KEK}|" .env
+          echo "AUTH_KEK=${KEK}" >> "$GITHUB_ENV"
+
+      - name: Start dependencies
+        run: docker compose up -d --wait postgres redis mailpit
+
+      - name: Migrate
+        run: pnpm db:migrate
+
+      - name: Integration, e2e and coverage thresholds
+        run: pnpm test:coverage
+
+      # The committed document is the contract clients generate from. Regenerating
+      # it and diffing turns a breaking API change into a failed build instead of a
+      # surprise at runtime.
+      - name: OpenAPI contract has not drifted
+        run: |
+          pnpm openapi
+          git diff --exit-code -- apps/api/openapi/openapi.json \
+            || { echo "::error::OpenAPI document is stale — run 'pnpm openapi' and commit the result"; exit 1; }
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
+      - name: Dependency logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
+
+      - name: Stop dependencies
+        if: always()
+        run: docker compose down -v
+
+  # ── The image actually builds ──────────────────────────────────────────────
+  # Separate because it is slow, independent, and catches a class of failure the
+  # tests cannot: native modules that need musl, a broken multi-stage copy, a
+  # missing prod dependency.
+  image:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          target: runtime
+          push: false
+          load: true
+          tags: billing-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Proves @node-rs/argon2's native binding loads on alpine/musl — a failure
+      # mode that only appears inside the image, never in the test suite.
+      - name: Argon2 loads inside the image
+        run: |
+          docker run --rm billing-api:ci node -e "
+            const { hash, verify } = require('@node-rs/argon2');
+            (async () => {
+              const h = await hash('probe', { memoryCost: 8192, timeCost: 1, parallelism: 1, algorithm: 2 });
+              if (!(await verify(h, 'probe'))) process.exit(1);
+              console.log('argon2 ok');
+            })().catch((e) => { console.error(e); process.exit(1); });
+          "

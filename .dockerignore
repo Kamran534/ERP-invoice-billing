@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.md
+docs/
+docker-compose*.yml
+load/
+coverage/
+.vscode
+.idea

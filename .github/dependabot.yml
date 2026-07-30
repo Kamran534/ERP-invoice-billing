@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # Security patches are the point; a weekly wall of minor bumps is not. Minor and
+  # patch updates are grouped into one PR per ecosystem, and majors come alone so
+  # they get read — this project pins majors deliberately (fastify 5, zod 4,
+  # drizzle 0.44) and a silent major is exactly what should not merge.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
+    labels: [dependencies]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    labels: [dependencies, ci]
+
+  # postgres / redis / mailpit / node base images
+  - package-ecosystem: docker
+    directories:
+      - /docker
+      - /
+    schedule:
+      interval: monthly
+    labels: [dependencies, docker]

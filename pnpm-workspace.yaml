@@ -1,0 +1,13 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm blocks dependency lifecycle scripts by default (a supply-chain guardrail:
+# a malicious postinstall is the cheapest attack on a JS project). Only these are
+# allowed to run, and each has a reason:
+#   @node-rs/argon2 — native prebuild fetch; no binary, no password hashing
+#   esbuild / turbo — download their platform binary at install time
+allowBuilds:
+  "@node-rs/argon2": true
+  esbuild: true
+  turbo: true
