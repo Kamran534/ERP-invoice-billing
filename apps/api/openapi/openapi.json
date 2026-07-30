@@ -8761,16 +8761,8 @@
   },
   "servers": [
     {
-      "url": "http://localhost:3000",
-      "description": "Local development"
-    },
-    {
-      "url": "https://api.staging.example.com",
-      "description": "Staging"
-    },
-    {
-      "url": "https://api.example.com",
-      "description": "Production"
+      "url": "/",
+      "description": "This server — the origin serving these docs"
     }
   ],
   "tags": [

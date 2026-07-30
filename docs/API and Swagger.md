@@ -26,6 +26,33 @@ either zod or Fastify — see
 to every operation, so callers learn those are possible everywhere rather than
 discovering them.
 
+## The server URL is relative, on purpose
+
+`servers` is a single entry, `/`. Swagger UI resolves it against the origin the
+page was loaded from, so **"Try it out" always calls the server that served the
+docs** — localhost, a LAN address, staging, anywhere.
+
+> [!bug] An absolute server URL breaks Try-it-out for everyone but you
+> With `http://localhost:3000` hardcoded, opening the docs at
+> `http://192.168.x.x:3000/docs` sends every Try-it-out request to
+> `http://localhost:3000` — a different origin. CORS blocks it and Swagger UI
+> reports a bare **"Failed to fetch"** with no indication that the server list is
+> the cause. It works perfectly on localhost, so the breakage only appears when
+> someone opens the docs from another machine. Same shape as the
+> [[Security headers#The localhost trap|upgrade-insecure-requests trap]].
+
+There are deliberately **no staging or production entries**. Placeholder hostnames
+are worse than none: they are selectable in the UI, so a stray Execute fires a real
+request at a domain we do not own. Add real environments when they exist.
+
+An e2e test asserts the first server is `/` and that no entry is absolute.
+
+> [!note] This is not a reason to widen CORS
+> The relative URL removes the cross-origin call entirely. `CORS_ORIGINS` stays the
+> allowlist of front-end origins that legitimately call this API — adding a LAN
+> address there to make a docs button work would be trading a real control for
+> convenience.
+
 ## Where the prose lives
 
 `info.description` is **deliberately empty**. A narrative there renders as a wall of

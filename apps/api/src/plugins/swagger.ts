@@ -83,11 +83,18 @@ export const swaggerPlugin = fp(
           version: '0.1.0',
           license: { name: 'UNLICENSED', identifier: 'UNLICENSED' },
         },
-        servers: [
-          { url: `http://localhost:${env.PORT}`, description: 'Local development' },
-          { url: 'https://api.staging.example.com', description: 'Staging' },
-          { url: 'https://api.example.com', description: 'Production' },
-        ],
+        // ⚑ Relative, so "Try it out" targets whatever origin the docs were loaded
+        // from. A hardcoded `http://localhost:3000` means every request from
+        // http://<lan-ip>:3000/docs is cross-origin, gets no
+        // Access-Control-Allow-Origin, and fails with a bare "Failed to fetch" —
+        // and it works perfectly on localhost, so the breakage only appears once
+        // someone opens the docs from another machine.
+        //
+        // Deliberately no staging/production entries: placeholder hostnames are
+        // worse than none, because they are selectable in the UI and would fire
+        // real requests at a domain we do not own. Real environments belong here
+        // once they exist.
+        servers: [{ url: '/', description: 'This server — the origin serving these docs' }],
         tags: [
           { name: TAGS.meta, description: 'Service discovery. Where everything else lives.' },
           { name: TAGS.health, description: 'Liveness and readiness probes. Unauthenticated.' },

@@ -724,6 +724,18 @@ describe('OpenAPI document', () => {
     expect(doc.tags.length).toBeGreaterThan(0);
   });
 
+  it('uses a relative server url so "Try it out" works from any origin', () => {
+    // ⚑ An absolute `http://localhost:3000` makes every Try-it-out request from
+    // http://<lan-ip>:3000/docs cross-origin, which CORS blocks with an unhelpful
+    // "Failed to fetch". It works on localhost, so the breakage is invisible until
+    // someone opens the docs from another machine.
+    const servers = openApiDoc().servers as Array<{ url: string }>;
+    expect(servers[0]?.url).toBe('/');
+    for (const server of servers) {
+      expect(server.url, `${server.url} is absolute`).not.toMatch(/^https?:\/\//);
+    }
+  });
+
   it('declares every security scheme the routes reference', () => {
     const doc = openApiDoc();
     const declared = new Set(Object.keys(doc.components.securitySchemes));
