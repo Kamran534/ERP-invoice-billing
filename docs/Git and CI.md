@@ -94,6 +94,44 @@ The lesson generalises: something that works locally *because of what you typed
 around it* — an exported variable, a resolved path — is a step that fails in CI.
 Verify the command in the exact form the workflow will run it.
 
+## Reviewing Dependabot PRs
+
+Green CI is necessary, not sufficient. Three questions, in order:
+
+1. **Is it a `0.x` package?** Then a *minor* bump is the de-facto major and deserves
+   real review, whatever the PR title says. List them with:
+
+   ```bash
+   node -e "for (const f of ['package.json','apps/api/package.json','packages/core/package.json','packages/crypto/package.json','packages/db/package.json','packages/mail/package.json','packages/testing/package.json']) { const p = require('./' + f); for (const k of ['dependencies','devDependencies']) for (const [n, r] of Object.entries(p[k] || {})) if (/^[\^~]?0\./.test(r)) console.log(n, r, f); }"
+   ```
+
+   Today that is `drizzle-orm` and `drizzle-kit`, which are excluded from the
+   grouped PR in `dependabot.yml` for exactly this reason. **Add to that exclusion
+   list when a new `0.x` dependency appears.**
+
+2. **Does it touch data?** For a drizzle bump, passing tests are not enough — the
+   schema must still produce the same DDL:
+
+   ```bash
+   pnpm --filter @auth/db exec drizzle-kit generate   # expect: No schema changes
+   git status --porcelain packages/db/migrations      # expect: empty
+   ```
+
+   A new migration file here means the upgrade changed how the schema is
+   interpreted, which is a migration you did not write and did not intend.
+
+3. **Can it be tested locally?** Bump it on a throwaway branch and run
+   `pnpm test:coverage`. Cheaper than a revert.
+
+> [!example] Worked example: drizzle-orm 0.44.7 → 0.45.2
+> Arrived in the grouped "minor-and-patch" PR despite being a de-facto major.
+> Tested on a branch: build, typecheck, 234/234 tests, coverage unchanged, and
+> `drizzle-kit generate` reported no schema changes — byte-identical DDL. Safe.
+> The grouping was then fixed so the next one arrives on its own.
+
+The `actions` group is the low-risk case: CI validates itself, so a green run *is*
+the evidence.
+
 ## Node 20 deprecation warnings
 
 Every job logs a warning that `actions/checkout@v4`, `actions/setup-node@v4` and

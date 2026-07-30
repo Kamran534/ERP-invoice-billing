@@ -64,10 +64,15 @@ Which note a change touches, so this is mechanical rather than a judgement call:
 | A new way to be paged at 3am | new runbook in [[Runbooks]] |
 | A term someone will have to look up | [[Glossary]] |
 
-**Figures that go stale** and must be re-checked when touched: test counts and
-coverage in [[Testing]], the measured Argon2 timing and k6 numbers in
+**Figures that go stale** and must be re-checked when touched: test counts in
+[[Testing]], the measured Argon2 timing and k6 numbers in
 [[Performance and scaling]], the path count in [[API and Swagger]], and the
 implementation status table in [[Auth module]].
+
+Where a figure moves on almost every commit, write it approximately and point at
+whatever *enforces* it — coverage is stated as "roughly 96%" with the real floors in
+`vitest.config.ts`. False precision in prose is not accuracy; it is a number nobody
+will keep true.
 
 `pnpm docs:check` resolves every wikilink the way Obsidian does — including heading
 links, aliases and links that accidentally wrap across a line. It runs as part of

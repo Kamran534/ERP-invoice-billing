@@ -5,14 +5,14 @@ updated: 2026-07-31
 
 # Testing
 
-**233 tests in three layers**, separated by what they need to run — because a suite
+**234 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
 | `unit` | `*.test.ts` | nothing | ~3 s | 122 |
 | `integration` | `*.int.test.ts` | Postgres, Mailpit | ~11 s | 51 |
-| `e2e` | `*.e2e.test.ts` | full stack | ~5 s | 60 |
+| `e2e` | `*.e2e.test.ts` | full stack | ~5 s | 61 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
 alias to their **source**, not `dist/`, so tests never need a prior build, coverage
@@ -72,9 +72,13 @@ envelope, and `/auth/token/refresh` explains the single-flight requirement.
 
 ## Coverage
 
-```
-All files   95.96 % stmts   88.13 % branch   94.49 % funcs
-```
+Roughly **96% statements, 88% branches, 94% functions** across the whole suite.
+
+> [!note] Deliberately approximate
+> The exact figures move by a hundredth on almost every commit, so a precise number
+> written here is guaranteed to be wrong and nobody notices. The **enforced** floors
+> live in `vitest.config.ts`, where CI fails if they are breached — that is the
+> number that means something. Read the current figure from `pnpm test:coverage`.
 
 Measured over the **whole** suite, which is why `pnpm test:coverage` runs every
 project and needs Docker. A unit-only number would be meaningless: the HTTP layer
@@ -101,6 +105,20 @@ Integration/e2e tests need the docker stack running.
   Start it with:  pnpm up && pnpm db:migrate
   Unit tests need none of this:  pnpm test
 ```
+
+## When the runner itself fails
+
+`spawn UNKNOWN`, `ERR_IPC_CHANNEL_CLOSED`, or a project reporting **no tests** at
+all is not a test failure — it is vitest being unable to fork worker processes.
+Almost always memory. `pnpm test:coverage` runs three projects and forks three sets
+of workers, so it is the first thing to break on a loaded machine.
+
+```powershell
+docker compose stop prometheus grafana adminer   # the obs profile is not needed to test
+```
+
+Then run the projects one at a time: `pnpm test`, `pnpm test:int`, `pnpm test:e2e`.
+If they pass individually, nothing is wrong with the code.
 
 ## House rules for new tests
 

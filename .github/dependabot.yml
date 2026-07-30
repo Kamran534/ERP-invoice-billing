@@ -14,6 +14,18 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+        # ⚑ 0.x packages are excluded from the grouped PR. Under semver, a 0.x
+        # minor bump is the de-facto major — 0.44 → 0.45 may break the API — but
+        # Dependabot classifies it as `minor` and the `ignore` rule below, which
+        # only holds back semver-majors, does not catch it. Without this exclusion
+        # a potentially breaking drizzle upgrade arrives inside a PR labelled
+        # "minor-and-patch" alongside genuinely routine bumps.
+        #
+        # Keep this list in step with the 0.x dependencies in the workspace:
+        #   node -e "…" — see docs/Git and CI.md, 'Reviewing Dependabot PRs'
+        exclude-patterns:
+          - drizzle-orm
+          - drizzle-kit
     ignore:
       - dependency-name: '*'
         update-types: [version-update:semver-major]
