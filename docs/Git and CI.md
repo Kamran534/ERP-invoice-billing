@@ -109,15 +109,41 @@ change → note map lives in [[Home#Keeping this vault true]]. The template also
 prompts for the risk areas worth a second look: `⚑` lines, `§` renumbering,
 migrations, and changes to a rate limit or TTL.
 
-## Not set up yet
+## Branch protection
 
-These need the GitHub web UI or the `gh` CLI, which is not installed here:
+`main` is unprotected until someone imports a ruleset — GitHub does not read them
+from the repository. Two are committed under `.github/rulesets/`, and importing is
+Settings → Rules → Rulesets → New ruleset → **Import a ruleset**.
 
-- **Branch protection on `main`** — require the `static`, `integration` and
-  `image` checks, require a PR, and forbid force-push. Worth doing before anyone
-  else has push access.
+| File | Blocks | Leaves working |
+|---|---|---|
+| `main-baseline.json` | force-push, branch deletion | pushing straight to `main` |
+| `main-full.json` | the above, plus merging without a PR or with red CI | only merges through a pull request |
+
+**Start with the baseline.** It prevents the two things that lose history and costs
+nothing while one person pushes directly to `main`.
+
+> [!warning] The full ruleset changes how you work
+> Requiring status checks blocks direct pushes, because the checks cannot have
+> passed for a commit that does not exist upstream yet. Everything then goes via a
+> branch and a pull request. Right end state; wrong thing to enable the day before
+> you need to push a fix.
+
+> [!danger] Renaming a CI job silently breaks the full ruleset
+> Its required checks name the jobs by their `name:` in `ci.yml` — *"Build,
+> typecheck, unit tests"*, *"Integration, e2e and coverage"*, *"Docker image"*.
+> Rename one and the ruleset waits forever for a check that never reports, leaving
+> `main` unmergeable. Re-import after any rename.
+
+## Still to do in the GitHub UI
+
+Neither can be done from here — there is no `gh` CLI and the SSH key authenticates
+pushes, not the REST API.
+
 - **Repository description and topics.**
-- **Dependabot alerts and secret scanning** — Settings → Advanced Security.
+- **Dependabot alerts and secret scanning** — Settings → Advanced Security. The
+  `dependabot.yml` in this repository schedules *version* updates; *alerts* for
+  known vulnerabilities are a separate switch.
 
 ## Related
 
