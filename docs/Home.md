@@ -19,6 +19,7 @@ it reads fine on GitHub too — the wikilinks just render as literal `[[text]]` 
 |---|---|
 | How the code is shaped | [[Architecture]] |
 | Getting it running | [[Running locally]] · [[Docker stack]] |
+| Version control and CI | [[Git and CI]] |
 | The auth subsystem | [[Auth module]] → [[AUTH-MODULE-PLAN]] |
 | Public API | [[API and Swagger]] |
 | Response headers | [[Security headers]] |
@@ -58,6 +59,7 @@ Which note a change touches, so this is mechanical rather than a judgement call:
 | A metric name, label or alert | [[Observability]] |
 | A compose service, image or Dockerfile stage | [[Docker stack]] |
 | An env var or a `package.json` script | [[Running locally]] |
+| A CI job, a git convention, an ignore rule | [[Git and CI]] |
 | Anything with a rejected alternative worth remembering | new ADR in [[Decisions]] |
 | A new way to be paged at 3am | new runbook in [[Runbooks]] |
 | A term someone will have to look up | [[Glossary]] |
