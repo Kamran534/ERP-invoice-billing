@@ -21,7 +21,7 @@
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate": "drizzle-kit generate",
-    "migrate": "tsx src/migrate.ts",
+    "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "clean": "rimraf dist *.tsbuildinfo"
