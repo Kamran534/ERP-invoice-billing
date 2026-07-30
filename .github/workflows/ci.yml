@@ -147,14 +147,25 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Proves @node-rs/argon2's native binding loads on alpine/musl — a failure
-      # mode that only appears inside the image, never in the test suite.
-      - name: Argon2 loads inside the image
+      # mode that appears only inside the image, never in the test suite.
+      #
+      # Runs through our own hasher rather than requiring the native module
+      # directly, which exercises the real graph (@auth/crypto → @auth/core →
+      # native binding) and so also catches a production dependency missing from
+      # the shipped image.
+      #
+      # ⚑ `-w /app/apps/api` matters. pnpm's isolated node_modules puts
+      # @node-rs/argon2 under packages/crypto, not the root, so resolving from
+      # /app fails with "Cannot find module". Run from a package that actually
+      # declares the dependency.
+      - name: Argon2 works inside the image
         run: |
-          docker run --rm billing-api:ci node -e "
-            const { hash, verify } = require('@node-rs/argon2');
-            (async () => {
-              const h = await hash('probe', { memoryCost: 8192, timeCost: 1, parallelism: 1, algorithm: 2 });
-              if (!(await verify(h, 'probe'))) process.exit(1);
-              console.log('argon2 ok');
-            })().catch((e) => { console.error(e); process.exit(1); });
+          docker run --rm -w /app/apps/api billing-api:ci node --input-type=module -e "
+            import { createArgon2Hasher } from '@auth/crypto';
+            const hasher = createArgon2Hasher({ memoryCost: 8192, timeCost: 1, parallelism: 1, maxConcurrency: 2, queueTimeoutMs: 2000 });
+            const { hash, algo } = await hasher.hash('probe');
+            if (algo !== 'argon2id') { console.error('unexpected algo: ' + algo); process.exit(1); }
+            if (!(await hasher.verify('probe', hash))) { console.error('verify failed'); process.exit(1); }
+            if (await hasher.verify('wrong', hash)) { console.error('accepted a wrong password'); process.exit(1); }
+            console.log('argon2id ok inside the image');
           "

@@ -54,14 +54,30 @@ thresholds, and finally regenerates the OpenAPI document and fails on a diff.
 > that creates `citext`. Service containers can run neither. Reusing the compose
 > file means CI tests the same database developers run — see [[Docker stack]].
 
-**`image`** — builds the Dockerfile and then runs Argon2 inside the result. That
-last step catches a failure mode no test can: the native binding not loading on
-alpine/musl. It only ever appears inside the image.
+**`image`** — builds the Dockerfile, then runs our own Argon2 hasher inside the
+result. That last step catches a failure mode no test can: the native binding not
+loading on alpine/musl. It only ever appears inside the image.
 
-## Two things that broke the first run
+It goes through `@auth/crypto` rather than requiring `@node-rs/argon2` directly, so
+it exercises the real graph (`@auth/crypto` → `@auth/core` → native binding) and
+also fails if a production dependency is missing from the shipped image.
 
-Both were found before pushing, by reading the config rather than waiting for a
-red build:
+> [!warning] Resolve from a package that declares the dependency
+> The step runs with `-w /app/apps/api`. pnpm's isolated `node_modules` puts
+> `@node-rs/argon2` under `packages/crypto`, not the repository root, so a bare
+> `require('@node-rs/argon2')` from `/app` fails with **"Cannot find module"** even
+> though the package is unquestionably installed. This is not a broken image; it is
+> resolution working as designed.
+
+> [!note] Reproducing this step on Windows
+> Git Bash rewrites `-w /app/apps/api` into `C:/Program Files/Git/app/...` through
+> MSYS path conversion, and docker rejects it. Prefix with `MSYS_NO_PATHCONV=1`.
+> Linux runners are unaffected.
+
+## Three things that broke a CI run
+
+The first two were found before pushing, by reading the config rather than waiting
+for a red build. The third needed a real run.
 
 - **`pnpm/action-setup@v4` errors** when a `version` input *and*
   `package.json#packageManager` both specify a version — even when they agree.
@@ -69,9 +85,22 @@ red build:
 - **`pnpm db:migrate` read `DATABASE_URL` from the process environment only.** It
   worked locally purely because it had been exported by hand, and would have
   failed in CI. It now loads `.env` like every other script.
+- **The image job's Argon2 probe used a bare `require`.** It had been verified by
+  hand with an explicit `.pnpm` path, and the workflow was then written with the
+  short form — which does not resolve. The Docker build itself was green; only the
+  step after it failed.
 
-The lesson generalises: a script that works locally *because of something you
-typed earlier* is a script that fails in CI.
+The lesson generalises: something that works locally *because of what you typed
+around it* — an exported variable, a resolved path — is a step that fails in CI.
+Verify the command in the exact form the workflow will run it.
+
+## Node 20 deprecation warnings
+
+Every job logs a warning that `actions/checkout@v4`, `actions/setup-node@v4` and
+friends target Node 20 and are being forced onto Node 24. They are warnings, not
+failures, and the actions still work. Dependabot's `github-actions` ecosystem opens
+the version bumps on a monthly schedule; guessing at major versions by hand risks
+referencing a tag that does not exist and turning a warning into a hard failure.
 
 ## Pull requests
 
