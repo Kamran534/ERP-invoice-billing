@@ -5,13 +5,13 @@ updated: 2026-07-31
 
 # Testing
 
-**234 tests in three layers**, separated by what they need to run — because a suite
+**333 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
-| `unit` | `*.test.ts` | nothing | ~3 s | 122 |
-| `integration` | `*.int.test.ts` | Postgres, Mailpit | ~11 s | 51 |
+| `unit` | `*.test.ts` | nothing | ~5 s | 183 |
+| `integration` | `*.int.test.ts` | Postgres, Mailpit | ~25 s | 89 |
 | `e2e` | `*.e2e.test.ts` | full stack | ~5 s | 61 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
@@ -106,6 +106,26 @@ Integration/e2e tests need the docker stack running.
   Unit tests need none of this:  pnpm test
 ```
 
+## Serialising the projects that share a database
+
+Integration and e2e run **one file at a time**. They share a single Postgres and
+truncate in `beforeEach`, so two files in parallel means one file's truncate
+deleting rows another is mid-way through asserting on.
+
+> [!danger] `fileParallelism: false` does not do this inside a project
+> That option is honoured only at the **root** of the vitest config. Inside a
+> `projects[]` entry it is silently ignored — no warning, no error. The setting sat
+> in the integration project looking correct for as long as there was exactly one
+> integration file, and broke the instant a second appeared: 18 failures whose
+> messages all pointed at the repository code and had nothing to do with it.
+>
+> `pool: 'forks'` plus `poolOptions.forks.singleFork` is what actually serialises.
+> Both are set, with `fileParallelism` left alongside them to state the intent.
+
+The tell: each file passes alone, and they fail together. If you see that, suspect
+shared state before suspecting the code — and check whether the option you rely on
+is one vitest only accepts at root level.
+
 ## When the runner itself fails
 
 `spawn UNKNOWN`, `ERR_IPC_CHANNEL_CLOSED`, or a project reporting **no tests** at
@@ -124,8 +144,9 @@ If they pass individually, nothing is wrong with the code.
 
 - **Name by layer**: `foo.test.ts`, `foo.int.test.ts`, `foo.e2e.test.ts`. The
   `include` patterns key off it.
-- **Integration and e2e run serially** (`fileParallelism: false`) — they share one
-  database and truncate between tests.
+- **Integration and e2e run serially** via `poolOptions.forks.singleFork` — they
+  share one database and truncate between tests. See the warning above about why
+  `fileParallelism` is not the setting that achieves this.
 - **Anything touching rate limits needs its own `REDIS_KEY_PREFIX`.** Counters are
   shared state with a one-hour window; without isolation a suite inherits the
   budget the previous run spent, and unrelated tests start seeing `429`.

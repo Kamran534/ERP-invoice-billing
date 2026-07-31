@@ -151,6 +151,13 @@ export const errors = {
   invalidCode: (attemptsRemaining: number) =>
     new AuthError('INVALID_CODE', 'Incorrect code', { details: { attemptsRemaining } }),
 
+  /**
+   * ⚑ Deliberately identical for an unknown token and a detected reuse. A distinct
+   * message would confirm to an attacker that replay detection exists and that
+   * their token is the one that tripped it (§5.5.4 step 6).
+   */
+  invalidRefreshToken: () => new AuthError('INVALID_REFRESH_TOKEN', 'Invalid refresh token'),
+
   challengeExhausted: () =>
     new AuthError('CHALLENGE_EXHAUSTED', 'Too many incorrect attempts — request a new code'),
 

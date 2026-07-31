@@ -75,9 +75,18 @@ export default defineConfig({
           exclude: NEVER,
           environment: 'node',
           globalSetup: ['./test/global-setup.ts'],
-          // ⚑ Serial. These share one database and truncate between tests; running
-          // files in parallel would have them wipe each other's rows and fail
-          // intermittently — the worst kind of test.
+          // ⚑ These share one database and truncate between tests, so they must run
+          // one file at a time — otherwise one file's `beforeEach` truncate deletes
+          // rows another file is mid-way through asserting on.
+          //
+          // `fileParallelism: false` alone does NOT do this. It is honoured only at
+          // the root of the config; inside a project entry it is silently ignored.
+          // It sat here looking correct for as long as there was a single
+          // integration file, and broke the moment a second one appeared —
+          // 18 failures that pointed at the repositories and were nothing to do
+          // with them. `singleFork` is the setting that actually serializes.
+          pool: 'forks',
+          poolOptions: { forks: { singleFork: true } },
           fileParallelism: false,
           testTimeout: 30_000,
           hookTimeout: 30_000,
@@ -91,6 +100,11 @@ export default defineConfig({
           exclude: NEVER,
           environment: 'node',
           globalSetup: ['./test/global-setup.ts'],
+          // Same reasoning as the integration project: one file at a time against
+          // shared infrastructure. See the note there about why `fileParallelism`
+          // is not sufficient on its own.
+          pool: 'forks',
+          poolOptions: { forks: { singleFork: true } },
           fileParallelism: false,
           testTimeout: 60_000,
           hookTimeout: 60_000,
