@@ -10,6 +10,7 @@
 import { AuthError, errors } from '../errors.js';
 import { audit, emit, type AuthContext, type RequestContext } from '../context.js';
 import type { AccessClaims, RefreshTokenRow, Session, User } from '../ports.js';
+import type { CryptoDeps } from './deps.js';
 
 export interface RotateRefreshInput extends RequestContext {
   /** The opaque secret the client presented. Never logged, never stored. */
@@ -23,10 +24,11 @@ export interface RotateRefreshResult {
   session: Session;
 }
 
-export interface RefreshDeps {
-  sha256: (input: string) => Uint8Array;
-  newSecret: () => string;
-}
+/**
+ * Rotation uses only `sha256` and `newSecret`, but takes the whole `CryptoDeps`
+ * so the module has one vocabulary rather than a per-use-case dialect that drifts.
+ */
+export type RefreshDeps = CryptoDeps;
 
 export async function rotateRefreshToken(
   ctx: AuthContext,
@@ -158,9 +160,17 @@ export async function rotateRefreshToken(
 /**
  * A used token presented again means two parties hold it (§5.5.4).
  *
- * The grace window is the one exception, and it is deliberately narrow: only the
- * *immediate* predecessor, only within `reuseGraceMs`, and only while its successor
- * is itself still unused. Anything looser and a thief's replay is forgiven too.
+ * There are exactly two exceptions, in order of how narrow they are.
+ *
+ * The first is the token still being in flight: `claim` reports `reuse` whenever
+ * the row was already used when it looked, and that includes a sibling request
+ * that simply arrived a few milliseconds after the winner committed. The database
+ * cannot tell those apart from a replay — both are "used_at is set" — so the
+ * decision is made here, on how recently, and it is a policy rather than a fact.
+ *
+ * The second is the *immediate predecessor* being re-presented within
+ * `reuseGraceMs`, and only while its successor is itself still unused. Anything
+ * looser and a thief's replay is forgiven too.
  */
 async function handleReuse(
   ctx: AuthContext,
@@ -169,6 +179,28 @@ async function handleReuse(
   token: RefreshTokenRow,
   now: Date,
 ): Promise<RotateRefreshResult> {
+  const { inFlightWindowMs } = ctx.config.tokens.refresh;
+  if (
+    // `> 0` matters: without it a window of zero still forgives a replay in the
+    // same millisecond, which is exactly what "off" is supposed to forbid.
+    inFlightWindowMs > 0 &&
+    token.usedAt !== null &&
+    now.getTime() - token.usedAt.getTime() <= inFlightWindowMs
+  ) {
+    // ⚑ Not theft: another request claimed this same token moments ago. Reporting
+    // the losers of a multi-tab race as theft destroys the session of a user who
+    // did nothing but open a second tab, and it happens far more often than theft.
+    await audit(ctx, {
+      event: 'auth.refresh_concurrent',
+      actorType: 'system',
+      sessionId: token.sessionId,
+      ip: input.ip,
+      userAgent: input.userAgent,
+      metadata: { inFlight: true, claimedMsAgo: now.getTime() - token.usedAt.getTime() },
+    });
+    throw new AuthError('REFRESH_IN_PROGRESS', 'A refresh is already in progress');
+  }
+
   const graceMs = ctx.config.tokens.refresh.reuseGraceMs;
   const withinGrace =
     graceMs > 0 && token.usedAt !== null && now.getTime() - token.usedAt.getTime() <= graceMs;

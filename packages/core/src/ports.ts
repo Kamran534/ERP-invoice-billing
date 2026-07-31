@@ -37,7 +37,11 @@ export type OneTimeTokenPurpose =
   | 'password_reset'
   | 'magic_link'
   | 'email_change'
-  | 'org_invite';
+  | 'org_invite'
+  // The 2FA challenge (§5.4.2). Reuses this table because single-use atomic
+  // consumption, a TTL and a payload are exactly what it needs, and purpose is a
+  // text column so widening this union requires no migration.
+  | 'mfa_challenge';
 
 export interface User {
   id: UserId;
@@ -138,14 +142,17 @@ export interface RefreshTokenRepo {
   issue(sessionId: SessionId, hash: Uint8Array, expiresAt: Date): Promise<RefreshTokenRow>;
   /**
    * Read the row, then claim it with a guarded `UPDATE ... WHERE used_at IS NULL`
-   * (§5.5.3). The read-then-guard order is what separates the two cases that look
-   * identical afterwards: a row that was **already** used when we read it is reuse,
-   * while a guard that fails after a clean read means someone claimed it in
-   * between — a concurrent refresh, not theft.
+   * (§5.5.3).
    *
-   * Returns a classification only. The grace-window policy lives in the use-case,
-   * because whether to forgive a re-presented predecessor is a decision, not a
-   * database fact.
+   * ⚑ `concurrent` is a proof: the guard failed after a clean read, so someone
+   * claimed the token in between. `reuse` is **not** a proof — it means only that
+   * the row was already spent when we looked, which a sibling request arriving
+   * milliseconds late produces just as readily as a thief. `token.usedAt` carries
+   * the fact the use-case needs to tell them apart.
+   *
+   * Returns a classification only. Both the in-flight window and the grace window
+   * live in the use-case, because whether to forgive a presentation is a decision,
+   * not a database fact.
    */
   claim(hash: Uint8Array): Promise<RefreshClaim>;
   link(tokenId: string, replacedById: string): Promise<void>;
@@ -233,6 +240,8 @@ export interface TrustedDeviceRepo {
   create(input: { userId: UserId; hash: Uint8Array; label: string | null; expiresAt: Date; mfaSatisfiedAt: Date }): Promise<{ id: DeviceId }>;
   findValidByHash(hash: Uint8Array): Promise<{ id: DeviceId; userId: UserId } | null>;
   listForUser(userId: UserId): Promise<Array<{ id: DeviceId; label: string | null; lastUsedAt: Date | null; expiresAt: Date }>>;
+  /** Records use. ⚑ Must not extend `expires_at` — the 30-day cap never slides (§5.4.5). */
+  touch(id: DeviceId, at: Date): Promise<void>;
   revoke(id: DeviceId): Promise<void>;
   revokeAllForUser(userId: UserId): Promise<number>;
 }
@@ -269,6 +278,13 @@ export interface HashResult {
 export interface PasswordHasher {
   hash(plain: string): Promise<HashResult>;
   verify(plain: string, hash: string): Promise<boolean>;
+  /**
+   * ⚑ Verify against a fixed internal hash and always return false. Called on the
+   * no-such-user and no-password paths so they cost what a real verify costs
+   * (§5.3 step 2). Returning `false` rather than `void` lets the caller write the
+   * two branches identically.
+   */
+  verifyDummy(plain: string): Promise<false>;
   /** True for legacy algorithms — triggers lazy rehash on successful login (§5.3 step 5). */
   needsRehash(hash: string): boolean;
 }

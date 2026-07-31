@@ -132,13 +132,24 @@ Green CI is necessary, not sufficient. Three questions, in order:
 The `actions` group is the low-risk case: CI validates itself, so a green run *is*
 the evidence.
 
-## Node 20 deprecation warnings
+## Action versions and the Node 20 deprecation
 
-Every job logs a warning that `actions/checkout@v4`, `actions/setup-node@v4` and
-friends target Node 20 and are being forced onto Node 24. They are warnings, not
-failures, and the actions still work. Dependabot's `github-actions` ecosystem opens
-the version bumps on a monthly schedule; guessing at major versions by hand risks
-referencing a tag that does not exist and turning a warning into a hard failure.
+Every action in `ci.yml` is pinned to a major that declares `runs.using: node24`:
+`actions/checkout@v7`, `actions/setup-node@v7`, `actions/upload-artifact@v7`,
+`pnpm/action-setup@v6`, `docker/setup-buildx-action@v4`, `docker/build-push-action@v7`.
+Before this, every job logged a warning that its actions targeted Node 20 and were
+being forced onto Node 24.
+
+⚑ Do not guess a major version. Several of these advanced two majors at once and
+the newest tag is not always the Node 24 one — `actions/upload-artifact` moved to
+node24 in v6, kept it in v7. Check the runtime the tag actually declares:
+
+```bash
+curl -s https://raw.githubusercontent.com/actions/checkout/v7/action.yml | grep using:
+```
+
+Referencing a tag that does not exist turns a warning into a hard failure, which is
+why Dependabot's monthly `github-actions` bump is the normal route.
 
 ## Pull requests
 

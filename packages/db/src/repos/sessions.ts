@@ -128,18 +128,22 @@ export function createRefreshTokenRepo(db: Database, deps: RepoDeps): RefreshTok
     },
 
     /**
-     * ⚑ Read first, then claim with a guard. The order is the whole point.
+     * ⚑ Read first, then claim with a guard. The order is what makes one of the two
+     * race cases provable:
      *
-     * Afterwards, "already used when we looked" and "used by someone else while we
-     * were looking" are indistinguishable — both have `used_at` set. Reading before
-     * the guarded write is what tells them apart:
+     *   read clean, guard updates 0   → certainly a race. Another request claimed
+     *                                   this token between our read and our write.
+     *   read shows used_at set        → the token was already spent when we looked.
      *
-     *   read shows used_at set        → reuse. Presumed theft (§5.5.4).
-     *   read clean, guard updates 0   → a concurrent refresh won the race (§5.5.5).
+     * The second is **not** proof of theft, and an earlier version of this comment
+     * claimed it was. Ten tabs refreshing at once do not all read before the winner
+     * writes: the ones that arrive a few milliseconds later read a row that is
+     * simply used, which is byte-for-byte what a replay looks like. Whether that is
+     * a sibling or a thief is decided in the use-case from `usedAt` and
+     * `inFlightWindowMs` — a policy, not something this query can know.
      *
      * Collapsing this into a single `UPDATE ... WHERE used_at IS NULL` would be one
-     * round trip fewer and would report every benign multi-tab race as token theft,
-     * logging real users out.
+     * round trip fewer and would lose the provable case entirely.
      */
     async claim(hash): Promise<RefreshClaim> {
       const [existing] = await db

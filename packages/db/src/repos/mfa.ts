@@ -177,6 +177,15 @@ export function createTrustedDeviceRepo(db: Database, deps: RepoDeps): TrustedDe
         .orderBy(desc(trustedDevices.createdAt));
     },
 
+    /**
+     * ⚑ Sets `last_used_at` and nothing else. The tempting one-line addition here
+     * is to push `expires_at` out on every use, which quietly converts a 30-day cap
+     * into permanent 2FA exemption for any device that logs in monthly (§5.4.5).
+     */
+    async touch(id: DeviceId, at: Date) {
+      await db.update(trustedDevices).set({ lastUsedAt: at }).where(eq(trustedDevices.id, id));
+    },
+
     async revoke(id: DeviceId) {
       await db
         .update(trustedDevices)

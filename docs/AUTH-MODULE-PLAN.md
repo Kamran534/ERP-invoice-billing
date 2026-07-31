@@ -661,12 +661,25 @@ alarms and a logged-out user. Defenses in order of importance:
 
 1. **Client-side single-flight + cross-tab leader election** (§13.3) — the real fix. One refresh in
    flight per browser, ever; the others await the same promise.
-2. **The guard row**, step 13 — the loser of a genuine race gets `409 REFRESH_IN_PROGRESS`, waits
-   ~200 ms, retries once, and picks up the winner's new cookie. Never counted as theft.
-3. **`reuseGraceMs`** (default `0`, max 10 s) — re-presenting the *immediate predecessor* within the
+2. **The guard row**, step 13 — a request that reads the row clean and then loses the guarded
+   `UPDATE` is *provably* a race: someone claimed the token between our read and our write. It gets
+   `409 REFRESH_IN_PROGRESS`, waits ~200 ms, retries once, and picks up the winner's new cookie.
+   Never counted as theft.
+3. **`inFlightWindowMs`** (default `2 s`, max 30 s) — ⚑ the guard row alone is not enough, and
+   assuming it was is the mistake this design originally made. Four tabs do not read in lockstep:
+   whichever ones the connection pool starts *after* the winner commits read a row that is simply
+   used, which is byte-for-byte what a replay looks like. The database cannot tell them apart, so
+   the use-case decides on recency — a token claimed within this window is a sibling, not a thief.
+   The asymmetry is what makes this cheap: a `409` hands the caller no tokens, so an attacker inside
+   the window gains a retry and nothing else, while every attempt outside it still trips detection.
+   Setting it to `0` restores the false positive and is flagged by `auditProductionConfig`.
+4. **`reuseGraceMs`** (default `0`, max 10 s) — re-presenting the *immediate predecessor* within the
    window returns the current successor instead of alarming. Pragmatic for flaky mobile networks,
    but it widens the theft window, so it ships off. ⚑ Grace applies only to the direct predecessor,
    never deeper in the chain, and never after the successor has itself been used.
+
+The three are ordered by how much they prove. (2) is a fact about ordering; (3) is a judgement about
+time; (4) is a concession to unreliable networks. Only (2) is free.
 
 #### 5.5.6 Where the tokens live, per client class
 
@@ -704,8 +717,11 @@ total authentication outage — and record that trade-off as an accepted risk in
 
 #### 5.5.10 Refresh test matrix (all must pass, §14.2)
 Happy rotation · 50 sequential rotations · reuse of the immediate predecessor · reuse of an ancient
-ancestor · reuse just inside and just outside `reuseGraceMs` · 4 concurrent refreshes (exactly one
-200, no alarms) · expired refresh · revoked session · idle timeout · absolute timeout not extendable
+ancestor · reuse just inside and just outside `reuseGraceMs` · reuse just inside and just outside
+`inFlightWindowMs` · 10 concurrent refreshes against real Postgres (exactly one `200`; every loser
+either `concurrent` or a `reuse` whose `usedAt` is from moments ago — ⚑ asserting that `reuse` never
+occurs here passes on a fast laptop and fails on CI, because it asserts a scheduling accident rather
+than a guarantee) · expired refresh · revoked session · idle timeout · absolute timeout not extendable
 · password changed mid-session · user suspended mid-session · user deleted mid-session · org
 membership removed mid-session · missing CSRF token · cross-origin request · tampered token ·
 another user's token · refresh after logout-all · refresh spanning a signing-key rotation · clock
@@ -996,6 +1012,7 @@ interface GeoIp         { lookup(ip: string): Promise<GeoInfo | null> }  // opti
     refresh: { idleTtl: '30d', absoluteTtl: '90d',
                rotate: true,              // ⚑ never false in production
                reuseGraceMs: 0,           // §5.5.5 — raising this widens the theft window
+               inFlightWindowMs: 2000,    // §5.5.5 — ⚑ 0 turns every multi-tab race into "theft"
                reuseRevokesAllSessions: false,
                concurrentRetry: { attempts: 1, backoffMs: 200 } },
     revocationCheck: 'none',              // 'cache' for instant kill (§5.5.9)

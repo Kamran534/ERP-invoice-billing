@@ -7,14 +7,17 @@
  *
  * The refresh-token cases are the ones to read first: the difference between
  * "reuse" and "concurrent" is the difference between logging a thief out and
- * logging a legitimate user out.
+ * logging a legitimate user out. Note what these tests deliberately do *not*
+ * assert — the repository reports facts, and the forgiving is done in core.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { createTestDb, truncateAll, insertUser, futureDate, pastDate } from '@auth/testing';
 import { sha256, uuidv7, randomSecret } from '@auth/crypto';
 import type { OneTimeTokenPurpose } from '@auth/core';
 import type { DbHandle } from '../pool.js';
+import { refreshTokens } from '../schema.js';
 import { createRepos, type Repos } from './index.js';
 
 let handle: DbHandle;
@@ -150,26 +153,78 @@ describe('refresh tokens', () => {
     expect(claim.outcome).toBe('unknown');
   });
 
-  it('separates a concurrent race from genuine reuse', async () => {
-    // ⚑ The distinction the whole design turns on. Ten simultaneous refreshes of a
-    // single live token: exactly one wins, and the losers must be reported as
-    // `concurrent` (→ 409, retry) and never as `reuse` (→ theft, session destroyed).
+  it('lets exactly one of ten simultaneous refreshes win', async () => {
     const user = await insertUser(handle.db);
     const session = await newSession(user.id);
     const secret = randomSecret('rt');
     await repos.refreshTokens.issue(session.id, sha256(secret), futureDate(86_400_000));
 
-    const outcomes = (
-      await Promise.all(
-        Array.from({ length: 10 }, () => repos.refreshTokens.claim(sha256(secret))),
-      )
-    ).map((c) => c.outcome);
+    const claims = await Promise.all(
+      Array.from({ length: 10 }, () => repos.refreshTokens.claim(sha256(secret))),
+    );
+    const outcomes = claims.map((c) => c.outcome);
 
+    // The atomicity guarantee, which is absolute: the token is spendable once.
     expect(outcomes.filter((o) => o === 'ok')).toHaveLength(1);
-    expect(outcomes.filter((o) => o === 'concurrent').length).toBeGreaterThan(0);
     expect(outcomes).not.toContain('unknown');
-    // A race must never be mistaken for theft.
-    expect(outcomes.filter((o) => o === 'reuse')).toHaveLength(0);
+    expect(outcomes).not.toContain('revoked');
+    expect(outcomes).not.toContain('expired');
+  });
+
+  it('⚑ cannot itself tell a late sibling from a replay — but dates the claim', async () => {
+    // This is the test that caught the design error. Under real parallelism the
+    // losers do NOT all read before the winner writes: whichever ones the pool
+    // starts after the winner commits see a plainly-used row, which is exactly what
+    // a thief's replay looks like. Asserting `reuse` never occurs here passed on a
+    // fast laptop and failed on CI, because it was asserting a scheduling accident.
+    //
+    // What the repository can promise is the fact the use-case needs: every loser
+    // reports a `usedAt` from moments ago, so `inFlightWindowMs` can forgive them.
+    const user = await insertUser(handle.db);
+    const session = await newSession(user.id);
+    const secret = randomSecret('rt');
+    await repos.refreshTokens.issue(session.id, sha256(secret), futureDate(86_400_000));
+
+    const before = Date.now();
+    const claims = await Promise.all(
+      Array.from({ length: 10 }, () => repos.refreshTokens.claim(sha256(secret))),
+    );
+
+    const losers = claims.filter((c) => c.outcome !== 'ok');
+    expect(losers).toHaveLength(9);
+    for (const loser of losers) {
+      expect(['concurrent', 'reuse']).toContain(loser.outcome);
+      if (loser.outcome === 'reuse') {
+        expect(loser.token.usedAt).not.toBeNull();
+        expect(loser.token.usedAt!.getTime()).toBeGreaterThanOrEqual(before - 1_000);
+      }
+    }
+  });
+
+  it('reports a token used long ago as reuse, with a stale usedAt', async () => {
+    const user = await insertUser(handle.db);
+    const session = await newSession(user.id);
+    const secret = randomSecret('rt');
+    const issued = await repos.refreshTokens.issue(
+      session.id,
+      sha256(secret),
+      futureDate(86_400_000),
+    );
+
+    const first = await repos.refreshTokens.claim(sha256(secret));
+    expect(first.outcome).toBe('ok');
+
+    // Backdate the claim, standing in for "spent an hour ago" — the case where a
+    // second presentation really is a replay and no window should forgive it.
+    await handle.db
+      .update(refreshTokens)
+      .set({ usedAt: new Date(Date.now() - 3_600_000) })
+      .where(eq(refreshTokens.id, issued.id));
+
+    const second = await repos.refreshTokens.claim(sha256(secret));
+    expect(second.outcome).toBe('reuse');
+    if (second.outcome !== 'reuse') return;
+    expect(Date.now() - second.token.usedAt!.getTime()).toBeGreaterThan(60_000);
   });
 
   it('reports a revoked token as revoked, not as reuse', async () => {

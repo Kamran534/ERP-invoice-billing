@@ -361,7 +361,7 @@ export const oneTimeTokens = pgTable(
     userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     purpose: text('purpose')
       .notNull()
-      .$type<'email_verify' | 'password_reset' | 'magic_link' | 'email_change' | 'org_invite'>(),
+      .$type<'email_verify' | 'password_reset' | 'magic_link' | 'email_change' | 'org_invite' | 'mfa_challenge'>(),
     tokenHash: bytea('token_hash').notNull(),
     /** e.g. { newEmail } for email_change, { orgId, roleId } for org_invite. */
     payload: jsonb('payload').notNull().default({}),

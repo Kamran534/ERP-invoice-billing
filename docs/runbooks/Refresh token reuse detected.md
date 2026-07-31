@@ -92,19 +92,28 @@ client retrying is not.
 
 Do **not** raise the threshold. The options, in order of preference:
 
+0. **Check `tokens.refresh.inFlightWindowMs` first.** If it is `0`, every multi-tab
+   race is being reported as theft and the alert is measuring your own
+   configuration. The default is 2 s; `auditProductionConfig` flags a zero at boot,
+   so also ask why that warning was ignored.
 1. Fix the client's single-flight. This is almost always the right answer.
 2. Set `tokens.refresh.reuseGraceMs` to a small non-zero value (max 10 s), which
    lets the *immediate predecessor* be re-presented once without alarming.
    ⚑ This widens the theft window and is off by default for that reason. Record the
-   decision if you turn it on.
+   decision if you turn it on. Note this is a *different* knob from
+   `inFlightWindowMs`: that one forgives the same token presented twice at once,
+   this one forgives the previous token presented once, late.
 
 ## Prevention
 
 - The `409 REFRESH_IN_PROGRESS` path exists so a genuine race does not look like
-  theft. If clients are seeing 401 rather than 409, the guard row may not be doing
-  its job — check the transaction isolation in the refresh use-case.
-- [[Testing]] has a 22-case refresh matrix including 4-concurrent-refresh with zero
-  false alarms. If you change rotation, run it.
+  theft. Losers reach it two ways: provably, by losing the guarded `UPDATE`, and by
+  recency, when `usedAt` is inside `inFlightWindowMs`. If clients are seeing 401
+  rather than 409, check the window before suspecting isolation —
+  [[ADR-0009 Decide refresh-token theft on recency, not on read ordering|ADR-0009]]
+  explains why the guard row alone cannot catch every race.
+- [[Testing]] has a refresh matrix including ten concurrent refreshes against real
+  Postgres. If you change rotation, run it.
 
 ## Related
 

@@ -5,13 +5,13 @@ updated: 2026-07-31
 
 # Testing
 
-**333 tests in three layers**, separated by what they need to run — because a suite
+**420 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
-| `unit` | `*.test.ts` | nothing | ~5 s | 183 |
-| `integration` | `*.int.test.ts` | Postgres, Mailpit | ~25 s | 89 |
+| `unit` | `*.test.ts` | nothing | ~5 s | 268 |
+| `integration` | `*.int.test.ts` | Postgres, Mailpit | ~25 s | 91 |
 | `e2e` | `*.e2e.test.ts` | full stack | ~5 s | 61 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
@@ -158,6 +158,13 @@ If they pass individually, nothing is wrong with the code.
   the limiter was bypassed, mis-keyed, or erroring because its store was down.
 - **Timing-sensitive assertions take the minimum of N runs**, not the mean — the
   minimum approximates the uncontended cost and barely moves under load.
+- **⚑ Do not assert an ordering the code does not enforce.** A concurrency test that
+  passes because your laptop happened to schedule the reads first is asserting an
+  accident, and it will fail on a machine with different core counts — or, worse,
+  keep passing while the behaviour it claims to protect is already broken. Assert
+  the invariant the code guarantees (exactly one winner) and the *facts* the losers
+  carry, not which branch they happened to take. See
+  [[ADR-0009 Decide refresh-token theft on recency, not on read ordering|ADR-0009]].
 - Test files are excluded from every package build, so they would go entirely
   unchecked. `tsconfig.test.json` typechecks them as part of `pnpm typecheck`.
 
@@ -174,6 +181,11 @@ See [[Decisions]] for the full stories.
 - **`upgrade-insecure-requests` broke the docs UI** for every non-localhost
   visitor. Now covered by four tests, including one that checks the docs CSP
   separately from the API CSP — see [[Security headers]].
+- **Refresh rotation called four legitimate tabs thieves.** Ten concurrent claims
+  against real Postgres returned four `reuse` verdicts on CI and zero locally, for
+  months, because the assertion depended on the connection pool's scheduling rather
+  than on anything the code promised —
+  [[ADR-0009 Decide refresh-token theft on recency, not on read ordering|ADR-0009]].
 
 ## Related
 

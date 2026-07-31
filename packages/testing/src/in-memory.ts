@@ -11,10 +11,12 @@
  * without a database.
  */
 
+import { createHash } from 'node:crypto';
 import type {
   AuditEvent,
   AuditRepo,
   Clock,
+  CryptoDeps,
   EventBus,
   Logger,
   Mailer,
@@ -201,8 +203,13 @@ export function createInMemorySessionRepo(clock: Clock = realClock): SessionRepo
   };
 }
 
+/**
+ * `all()` exposes the stored `hash` on purpose: it is how a test asserts that the
+ * secret itself was never persisted, which is the whole reason the column holds a
+ * digest.
+ */
 export function createInMemoryRefreshTokenRepo(clock: Clock = realClock): RefreshTokenRepo & {
-  all(): RefreshTokenRow[];
+  all(): Array<RefreshTokenRow & { hash: string }>;
 } {
   const byId = new Map<string, RefreshTokenRow & { hash: string }>();
   let seq = 0;
@@ -484,6 +491,11 @@ export function createInMemoryTrustedDeviceRepo(clock: Clock = realClock): Trust
         .filter((r) => r.userId === userId && !r.revokedAt)
         .map((r) => ({ id: r.id, label: r.label, lastUsedAt: r.lastUsedAt, expiresAt: r.expiresAt }));
     },
+    async touch(id, at) {
+      const row = rows.get(id);
+      // Mirrors the SQL adapter: `expiresAt` is deliberately untouched.
+      if (row) row.lastUsedAt = at;
+    },
     async revoke(id) {
       const row = rows.get(id);
       if (row) row.revokedAt = clock.now();
@@ -543,14 +555,26 @@ export const silentLogger: Logger = {
   error: () => {},
 };
 
-/** A hasher that is instant and reversible — for tests that are not about hashing. */
-export function createFakeHasher(): PasswordHasher {
+/**
+ * A hasher that is instant and reversible — for tests that are not about hashing.
+ *
+ * `verifyDummy` counts its calls. Timing parity cannot be asserted against a
+ * hasher this fast, so the unit tests assert the *call* instead: that the
+ * unknown-user path did the same work as the wrong-password path. The real timing
+ * property is measured against Argon2 in `@auth/crypto`'s password.test.ts.
+ */
+export function createFakeHasher(): PasswordHasher & { dummyVerifies: number } {
   return {
+    dummyVerifies: 0,
     async hash(plain) {
       return { hash: `fake:${plain}`, algo: 'argon2id' };
     },
     async verify(plain, stored) {
       return stored === `fake:${plain}`;
+    },
+    async verifyDummy(_plain) {
+      this.dummyVerifies += 1;
+      return false;
     },
     needsRehash(stored) {
       return !stored.startsWith('fake:');
@@ -588,6 +612,35 @@ export function createFakeTokenService(): TokenService & { minted: AccessClaimsL
 }
 
 type AccessClaimsLike = Parameters<TokenService['mintAccess']>[0];
+
+/**
+ * Deterministic `CryptoDeps`.
+ *
+ * `newSecret` counts rather than randomises, so a test can assert *which* secret
+ * came back — "the second refresh token issued" is a thing you can name. The
+ * hashing is real sha256 because the repositories index on it and a stub would
+ * make collisions possible in a way production never is.
+ */
+export function createTestCryptoDeps(): CryptoDeps & { issued: string[] } {
+  const issued: string[] = [];
+  let seq = 0;
+  return {
+    issued,
+    sha256: (input: string) => new Uint8Array(createHash('sha256').update(input).digest()),
+    newSecret(prefix = 'secret') {
+      const secret = `${prefix}_${(seq += 1)}`;
+      issued.push(secret);
+      return secret;
+    },
+    clientBinding: (request) =>
+      new Uint8Array(
+        createHash('sha256')
+          .update(`${request.userAgent ?? ''}|${request.ip ?? ''}`)
+          .digest(),
+      ),
+    hex,
+  };
+}
 
 export interface InMemoryRepos {
   users: ReturnType<typeof createInMemoryUserRepo>;

@@ -16,6 +16,7 @@ import {
   createRecordingEventBus,
   createRecordingMailer,
   createSequentialRandom,
+  createTestCryptoDeps,
   silentLogger,
   type InMemoryRepos,
 } from '@auth/testing';
@@ -32,12 +33,10 @@ let clock: FakeClock;
 let mailer: ReturnType<typeof createRecordingMailer>;
 let events: ReturnType<typeof createRecordingEventBus>;
 let ctx: AuthContext;
-let secretCounter = 0;
 
-const deps: RefreshDeps = {
-  sha256,
-  newSecret: () => `rt_secret_${(secretCounter += 1)}`,
-};
+// Rebuilt per test so the secret counter restarts — a failure message naming
+// `secret_2` should mean the same thing in every test.
+let deps: RefreshDeps;
 
 const baseConfig = (overrides: Partial<AuthConfig['tokens']['refresh']> = {}): AuthConfig =>
   defineAuthConfig({
@@ -104,6 +103,19 @@ const rotate = (secret: string, ctxOverride = ctx) =>
     userAgent: 'vitest',
   });
 
+/** The default `inFlightWindowMs`. */
+const IN_FLIGHT_MS = 2_000;
+
+/**
+ * Presenting a spent token *after* the in-flight window — which is what a replay
+ * actually looks like. Inside the window the same call is a multi-tab race, so a
+ * theft test that does not move the clock is testing the wrong rule.
+ */
+const replay = (secret: string, ctxOverride = ctx) => {
+  clock.advance(IN_FLIGHT_MS + 1);
+  return rotate(secret, ctxOverride);
+};
+
 async function expectAuthError(promise: Promise<unknown>, code: string): Promise<void> {
   await expect(promise).rejects.toSatisfy((error: unknown) => {
     if (!isAuthError(error)) throw new Error(`expected AuthError, got ${String(error)}`);
@@ -119,7 +131,7 @@ beforeEach(() => {
   repos = createInMemoryRepos(clock);
   mailer = createRecordingMailer();
   events = createRecordingEventBus();
-  secretCounter = 0;
+  deps = createTestCryptoDeps();
   ctx = buildContext(baseConfig());
 });
 
@@ -140,7 +152,7 @@ describe('the happy path', () => {
     const { secret } = await signIn();
     await rotate(secret);
     // Second presentation is reuse, which returns a deliberately bare 401.
-    await expectAuthError(rotate(secret), 'INVALID_REFRESH_TOKEN');
+    await expectAuthError(replay(secret), 'INVALID_REFRESH_TOKEN');
   });
 
   it('links predecessor to successor so the chain can be walked', async () => {
@@ -217,7 +229,7 @@ describe('reuse is treated as theft', () => {
     const { session, secret } = await signIn();
     const successor = (await rotate(secret)).refreshToken;
 
-    await expectAuthError(rotate(secret), 'INVALID_REFRESH_TOKEN');
+    await expectAuthError(replay(secret), 'INVALID_REFRESH_TOKEN');
 
     // ⚑ The successor must die too. Revoking only the replayed token would leave
     // the thief's copy working, which is the whole failure this prevents.
@@ -234,7 +246,7 @@ describe('reuse is treated as theft', () => {
     // Identical to an unknown token. Telling an attacker the alarm exists tells
     // them which token tripped it.
     const unknownMessage = await rotate('rt_never_issued').catch((e: Error) => e.message);
-    const reuseMessage = await rotate(secret).catch((e: Error) => e.message);
+    const reuseMessage = await replay(secret).catch((e: Error) => e.message);
     expect(reuseMessage).toBe(unknownMessage);
     expect(reuseMessage).not.toMatch(/reuse|theft|detect/i);
   });
@@ -242,7 +254,7 @@ describe('reuse is treated as theft', () => {
   it('audits at high severity and emits a security event', async () => {
     const { secret } = await signIn();
     await rotate(secret);
-    await rotate(secret).catch(() => undefined);
+    await replay(secret).catch(() => undefined);
 
     const [entry] = repos.audit.eventsOfType('auth.refresh_reuse_detected');
     expect(entry).toBeTruthy();
@@ -254,7 +266,7 @@ describe('reuse is treated as theft', () => {
   it('emails the user out of band', async () => {
     const { secret } = await signIn();
     await rotate(secret);
-    await rotate(secret).catch(() => undefined);
+    await replay(secret).catch(() => undefined);
 
     expect(mailer.sent).toHaveLength(1);
     expect(mailer.sent[0]?.to).toBe('ada@example.test');
@@ -275,7 +287,7 @@ describe('reuse is treated as theft', () => {
     });
 
     await rotate(secret);
-    await rotate(secret).catch(() => undefined);
+    await replay(secret).catch(() => undefined);
 
     // Signing the user out everywhere is available but not the default: one
     // compromised device should not necessarily end every session.
@@ -297,23 +309,82 @@ describe('reuse is treated as theft', () => {
     });
 
     await rotate(secret);
-    await rotate(secret).catch(() => undefined);
+    await replay(secret).catch(() => undefined);
 
     expect((await repos.sessions.findById(other.id))?.revokedAt).not.toBeNull();
   });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-describe('the grace window', () => {
-  it('is off by default, so an immediate replay is still theft', async () => {
+describe('the in-flight window', () => {
+  it('⚑ treats a second presentation of the same token as a race, not theft', async () => {
+    const { session, secret } = await signIn();
+    await rotate(secret);
+
+    // This is the case CI caught. `claim` reports `reuse` for any already-spent
+    // row, including a sibling request that arrived a moment after the winner
+    // committed — and calling that theft signs a user out for opening a tab.
+    await expectAuthError(rotate(secret), 'REFRESH_IN_PROGRESS');
+    expect((await repos.sessions.findById(session.id))?.revokedAt).toBeNull();
+  });
+
+  it('gives the loser a 409 and nothing else', async () => {
     const { secret } = await signIn();
     await rotate(secret);
-    // No time has passed at all, and it is still treated as reuse.
+    const error = await rotate(secret).catch((e) => e);
+
+    // A thief inside the window gains a retry, not a token — which is why the
+    // window costs so little.
+    expect(error.status).toBe(409);
+    expect(error.details).toBeUndefined();
+  });
+
+  it('becomes theft once the window closes', async () => {
+    const { session, secret } = await signIn();
+    await rotate(secret);
+
+    clock.advance(IN_FLIGHT_MS + 1);
+    await expectAuthError(rotate(secret), 'INVALID_REFRESH_TOKEN');
+    expect((await repos.sessions.findById(session.id))?.revokedReason).toBe('reuse_detected');
+  });
+
+  it('records the race without raising a security event', async () => {
+    const { secret } = await signIn();
+    await rotate(secret);
+    await rotate(secret).catch(() => undefined);
+
+    const [entry] = repos.audit.eventsOfType('auth.refresh_concurrent');
+    expect(entry?.metadata).toMatchObject({ inFlight: true });
+    expect(repos.audit.eventsOfType('auth.refresh_reuse_detected')).toHaveLength(0);
+    expect(events.published.map((e) => e.type)).not.toContain('security.refresh_reuse_detected');
+    expect(mailer.sent).toHaveLength(0);
+  });
+
+  it('can be switched off, at the cost of the multi-tab race', async () => {
+    ctx = buildContext(baseConfig({ inFlightWindowMs: 0 }));
+    const { secret } = await signIn();
+    await rotate(secret);
+
+    await expectAuthError(rotate(secret), 'INVALID_REFRESH_TOKEN');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('the grace window', () => {
+  // Pinned to 0 throughout, so these exercise the predecessor rule rather than
+  // being forgiven by the in-flight window a step earlier.
+  const graceConfig = (reuseGraceMs: number) =>
+    buildContext(baseConfig({ reuseGraceMs, inFlightWindowMs: 0 }));
+
+  it('is off by default, so a re-presented predecessor is theft', async () => {
+    ctx = buildContext(baseConfig({ inFlightWindowMs: 0 }));
+    const { secret } = await signIn();
+    await rotate(secret);
     await expectAuthError(rotate(secret), 'INVALID_REFRESH_TOKEN');
   });
 
   it('forgives the immediate predecessor inside the window', async () => {
-    ctx = buildContext(baseConfig({ reuseGraceMs: 5_000 }));
+    ctx = graceConfig(5_000);
     const { secret } = await signIn();
     await rotate(secret);
 
@@ -323,7 +394,7 @@ describe('the grace window', () => {
   });
 
   it('stops forgiving once the window closes', async () => {
-    ctx = buildContext(baseConfig({ reuseGraceMs: 5_000 }));
+    ctx = graceConfig(5_000);
     const { secret } = await signIn();
     await rotate(secret);
 
@@ -334,7 +405,7 @@ describe('the grace window', () => {
   it('stops forgiving once the successor has itself been used', async () => {
     // ⚑ Grace applies only while the chain has not moved on. Once the successor is
     // spent, a re-presented predecessor is indistinguishable from a replay.
-    ctx = buildContext(baseConfig({ reuseGraceMs: 10_000 }));
+    ctx = graceConfig(10_000);
     const { secret } = await signIn();
     const successor = (await rotate(secret)).refreshToken;
     await rotate(successor);
@@ -343,7 +414,7 @@ describe('the grace window', () => {
   });
 
   it('never forgives deeper than one step', async () => {
-    ctx = buildContext(baseConfig({ reuseGraceMs: 10_000 }));
+    ctx = graceConfig(10_000);
     const { secret } = await signIn();
     const second = (await rotate(secret)).refreshToken;
     await rotate(second);
@@ -479,7 +550,7 @@ describe('failures are contained', () => {
     };
     const { session, secret } = await signIn();
     await rotate(secret, failing as AuthContext);
-    await rotate(secret, failing as AuthContext).catch(() => undefined);
+    await replay(secret, failing as AuthContext).catch(() => undefined);
 
     expect((await repos.sessions.findById(session.id))?.revokedReason).toBe('reuse_detected');
   });
@@ -495,7 +566,7 @@ describe('failures are contained', () => {
     };
     const { session, secret } = await signIn();
     await rotate(secret, exploding as AuthContext);
-    await rotate(secret, exploding as AuthContext).catch(() => undefined);
+    await replay(secret, exploding as AuthContext).catch(() => undefined);
 
     expect((await repos.sessions.findById(session.id))?.revokedReason).toBe('reuse_detected');
   });

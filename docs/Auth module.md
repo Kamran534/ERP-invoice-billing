@@ -34,9 +34,13 @@ in: it links to the sections you actually need and tracks what is built.
 
 **Refresh rotation** (§5.5). Every refresh invalidates the token it was given. A
 token presented twice means two parties hold it, so the entire session family is
-revoked and the user is emailed. The consequence for clients is that
-[[ADR-0002 Hybrid access and refresh tokens|single-flight is mandatory]] — parallel
-refreshes from several tabs will trip your own theft detection.
+revoked and the user is emailed — *unless* the token was claimed within the last
+couple of seconds, which is one client racing itself rather than two clients
+holding one token
+([[ADR-0009 Decide refresh-token theft on recency, not on read ordering|ADR-0009]]).
+Clients should still treat
+[[ADR-0002 Hybrid access and refresh tokens|single-flight as mandatory]]: the window
+covers the tabs that arrive together, not a client that retries minutes later.
 
 **OTP** (§5.11). Six digits is ~20 bits. That is safe *only* because of three
 things at once: a 5-attempt cap, exactly one live challenge per destination, and a
@@ -53,7 +57,13 @@ Argon2 verification to keep the timing honest, and there is a test for it.
 |---|---|
 | `/health/live`, `/health/ready`, `/metrics`, `/` | Built |
 | `/.well-known/jwks.json` | Built |
-| Everything under `/auth/*` | Contract published, handler returns `501` |
+| Schema, repositories, crypto (AEAD, TOTP, tokens, hashing) | Built |
+| Use-cases: register, verify email, resend, password login, refresh rotation, logout, logout-all, session list/revoke | Built in `@auth/core`, unit-tested |
+| Everything under `/auth/*` | Contract published, handler still returns `501` |
+
+⛑ The middle two rows and the last one are the current gap: the decisions are
+implemented and tested, but nothing is wired to HTTP yet, so no endpoint behaves
+differently from before. Cookies, CSRF and the auth guard are the next slice.
 
 A 501 names the section that defines it:
 

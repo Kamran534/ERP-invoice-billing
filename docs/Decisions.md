@@ -21,6 +21,7 @@ New one: `templates/ADR` (Templates → Insert template).
 | [[ADR-0006 Ports and adapters for portability\|0006]] | Pure core, adapters at the edge | Accepted |
 | [[ADR-0007 Three test layers split by dependency\|0007]] | unit / integration / e2e | Accepted |
 | [[ADR-0008 Gate HTTPS-only headers behind one flag\|0008]] | One `HTTPS_ENABLED` drives HSTS, CSP upgrade, COOP, cookie `Secure` | Accepted |
+| [[ADR-0009 Decide refresh-token theft on recency, not on read ordering\|0009]] | The repo reports `usedAt`; core forgives a claim from the last 2 s | Accepted |
 
 ## Still open
 

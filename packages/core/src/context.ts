@@ -12,6 +12,7 @@
 import type { AuthConfig } from './config.js';
 import type {
   AuditRepo,
+  BreachChecker,
   Clock,
   EventBus,
   Logger,
@@ -49,6 +50,12 @@ export interface AuthContext {
   tokens: TokenService;
   mailer: Mailer;
   sms?: SmsSender;
+  /**
+   * Optional on purpose. `password.checkBreached` can be on while this is absent
+   * (air-gapped deployments, tests), and the policy check treats that as "control
+   * unavailable" rather than failing every signup — see `assertPasswordAcceptable`.
+   */
+  breachChecker?: BreachChecker;
   events: EventBus;
   logger: Logger;
 }

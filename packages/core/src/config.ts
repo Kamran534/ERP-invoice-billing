@@ -39,6 +39,23 @@ export const tokensConfigSchema = z.object({
        * Anything above 0 widens the theft window. Ships at 0.
        */
       reuseGraceMs: z.number().int().min(0).max(10_000).default(0),
+      /**
+       * ⚑ How recently a token must have been claimed for a *second presentation of
+       * that same token* to read as one client racing itself rather than as theft
+       * (§5.5.5).
+       *
+       * This cannot be zero. Ten tabs refreshing at once do not arrive in lockstep:
+       * some read the row before the winner's write and are detectably a race, but
+       * the ones that arrive a few milliseconds later read a row that is simply
+       * used — identical, at the database, to a replay. The only thing separating
+       * them is how recently the winner claimed it.
+       *
+       * Forgiving them costs little: a `409` hands the caller no tokens either way,
+       * so an attacker inside the window gains nothing but a retry, and every
+       * attempt outside it still trips detection. Refusing to forgive them costs a
+       * lot: real users get signed out for opening a second tab.
+       */
+      inFlightWindowMs: z.number().int().min(0).max(30_000).default(2_000),
       /** Nuclear option on theft: kill every session, not just the compromised one. */
       reuseRevokesAllSessions: z.boolean().default(false),
       concurrentRetry: z
@@ -219,6 +236,16 @@ export function auditProductionConfig(config: AuthConfig): string[] {
   const problems: string[] = [];
   if (!config.tokens.refresh.rotate) {
     problems.push('tokens.refresh.rotate is false — refresh-token theft becomes undetectable (§5.5.4)');
+  }
+  if (config.tokens.refresh.inFlightWindowMs === 0) {
+    problems.push(
+      'tokens.refresh.inFlightWindowMs is 0 — every multi-tab refresh race will be reported as token theft and sign the user out (§5.5.5)',
+    );
+  }
+  if (config.tokens.refresh.inFlightWindowMs > 5_000) {
+    problems.push(
+      `tokens.refresh.inFlightWindowMs is ${config.tokens.refresh.inFlightWindowMs}ms — far longer than a request takes, so replays are forgiven for no benefit (§5.5.5)`,
+    );
   }
   if (config.tokens.refresh.reuseGraceMs > 0) {
     problems.push(
