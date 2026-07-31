@@ -25,6 +25,8 @@
     "docs:check": "node scripts/check-docs.mjs docs",
     "db:generate": "pnpm --filter @auth/db exec drizzle-kit generate",
     "db:migrate": "pnpm --filter @auth/db run migrate",
+    "db:test:setup": "pnpm --filter @auth/db run test-db:setup",
+    "db:migrate:test": "pnpm --filter @auth/db run migrate:test",
     "db:studio": "pnpm --filter @auth/db exec drizzle-kit studio",
     "smoke": "pnpm --filter @app/api run smoke",
     "openapi": "pnpm --filter @app/api run openapi",

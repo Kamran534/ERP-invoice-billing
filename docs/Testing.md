@@ -208,6 +208,32 @@ See [[Decisions]] for the full stories.
   than on anything the code promised —
   [[ADR-0009 Decide refresh-token theft on recency, not on read ordering|ADR-0009]].
 
+## The test database is not your database
+
+`pnpm db:test:setup` once, then `pnpm db:migrate:test`. It creates `billing_test`
+alongside your development database, installs the extensions the compose init only
+adds on first boot, and writes `TEST_DATABASE_URL` into `.env`.
+
+⚑ This is not tidiness. `truncateAll` empties every `auth_*` table between tests,
+and it used to fall back to `DATABASE_URL` — so `pnpm test:int` wiped the database
+the developer was working in. It deleted a real account someone had registered
+through Swagger UI minutes earlier, between one command and the next, and nothing
+in the output suggested it had happened. The suite was green, because it was.
+
+`createTestDb()` now refuses to run at all unless the target is disposable:
+
+- `CI` is set — there, `DATABASE_URL` is an ephemeral service container.
+- `TEST_DATABASE_URL` was set deliberately.
+- The database name ends in `_test`.
+
+Otherwise it throws before the first `TRUNCATE`, with the fix in the message.
+Refusing to run is a worse morning than a failing test and a much better one than a
+missing table.
+
+The e2e project points its app at the same throwaway database when one is
+configured. It does not truncate, but it does create accounts on every run, and
+those have no business accumulating where someone is working.
+
 ## The one test that needs the internet
 
 `packages/crypto/src/breach.int.test.ts` talks to the real

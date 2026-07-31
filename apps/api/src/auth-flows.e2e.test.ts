@@ -34,6 +34,14 @@ beforeAll(async () => {
     loadEnv({
       ...process.env,
       NODE_ENV: 'test',
+      // ⚑ The throwaway database, when one is configured. e2e does not truncate,
+      // but it does create accounts on every run, and they have no business
+      // accumulating in the database someone is developing against.
+      ...(process.env['TEST_DATABASE_URL'] ? { DATABASE_URL: process.env['TEST_DATABASE_URL'] } : {}),
+    // ⚑ The throwaway database, when one is configured. e2e does not truncate,
+    // but it does create accounts on every run, and they have no business
+    // accumulating in the database someone is developing against.
+    ...(process.env['TEST_DATABASE_URL'] ? { DATABASE_URL: process.env['TEST_DATABASE_URL'] } : {}),
       LOG_LEVEL: 'silent',
       SWAGGER_ENABLED: 'false',
       REDIS_KEY_PREFIX: `e2e-flows-${Date.now()}:`,

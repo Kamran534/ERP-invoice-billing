@@ -37,6 +37,10 @@ function testEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
     NODE_ENV: 'test',
+    // ⚑ The throwaway database, when one is configured. e2e does not truncate,
+    // but it does create accounts on every run, and they have no business
+    // accumulating in the database someone is developing against.
+    ...(process.env['TEST_DATABASE_URL'] ? { DATABASE_URL: process.env['TEST_DATABASE_URL'] } : {}),
     LOG_LEVEL: 'silent',
     LOG_PRETTY: 'false',
     SWAGGER_ENABLED: 'true',

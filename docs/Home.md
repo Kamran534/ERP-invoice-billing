@@ -23,6 +23,7 @@ it reads fine on GitHub too — the wikilinks just render as literal `[[text]]` 
 | Version control and CI | [[Git and CI]] |
 | The auth subsystem | [[Auth module]] → [[AUTH-MODULE-PLAN]] |
 | Public API | [[API and Swagger]] |
+| One endpoint in depth | [[register]] |
 | Response headers | [[Security headers]] |
 | Tests | [[Testing]] |
 | Speed and capacity | [[Performance and scaling]] |
@@ -56,6 +57,7 @@ Which note a change touches, so this is mechanical rather than a judgement call:
 | A package boundary, a plugin, the request pipeline | [[Architecture]] |
 | An auth flow, table or config knob | [[AUTH-MODULE-PLAN]] (add `§`, never renumber) + [[Auth module]] if status moves |
 | A route, schema, status code or error shape | [[API and Swagger]] |
+| Anything about registration or email verification | [[register]] |
 | A response header | [[Security headers]] |
 | Test counts, layers, coverage floors, house rules | [[Testing]] |
 | A threshold, pool size, cost parameter, measured timing | [[Performance and scaling]] |

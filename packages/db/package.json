@@ -15,7 +15,10 @@
       "import": "./dist/schema.js"
     }
   },
-  "files": ["dist", "migrations"],
+  "files": [
+    "dist",
+    "migrations"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
@@ -24,7 +27,9 @@
     "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
-    "clean": "rimraf dist *.tsbuildinfo"
+    "clean": "rimraf dist *.tsbuildinfo",
+    "migrate:test": "tsx --env-file-if-exists=../../.env src/migrate-test.ts",
+    "test-db:setup": "tsx --env-file-if-exists=../../.env src/setup-test-db.ts"
   },
   "dependencies": {
     "@auth/core": "workspace:*",

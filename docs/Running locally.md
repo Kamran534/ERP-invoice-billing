@@ -74,6 +74,8 @@ pnpm up / up:obs / down    # docker stack
 pnpm down:volumes          # also drops the database
 pnpm logs / ps
 pnpm db:generate / db:migrate / db:studio
+pnpm db:test:setup         # create billing_test + set TEST_DATABASE_URL (once)
+pnpm db:migrate:test       # apply migrations to it
 pnpm smoke                 # dependency check
 pnpm docs:check            # resolve every wikilink in docs/ (part of pnpm verify)
 pnpm load                  # k6 against the containerised api
@@ -89,6 +91,11 @@ pnpm openapi               # write openapi/openapi.json for codegen or a CI diff
   those checks: `docker compose run --rm -e NODE_ENV=production api`.
 - **Unit tests need nothing.** If `pnpm test:int` complains, it will tell you
   exactly what to start — see [[Testing#Running without Docker]].
+- **⚑ Integration tests need their own database.** Run `pnpm db:test:setup` and
+  `pnpm db:migrate:test` once. The suite truncates every `auth_*` table between
+  tests, and until it was made to refuse, it did that to whatever `DATABASE_URL`
+  pointed at — deleting real accounts from the database being developed against.
+  See [[Testing#The test database is not your database]].
 - **Signing up needs outbound internet**, or it takes an extra 1.5 s. Every
   password goes to the HIBP range API before it is accepted; without a route out,
   the call times out, the check fails open with a warning, and signup proceeds.

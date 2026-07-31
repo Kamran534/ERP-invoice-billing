@@ -21,9 +21,12 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 const migrationsFolder = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../migrations');
 
 async function main(): Promise<void> {
-  const connectionString = process.env['DATABASE_URL'];
+  // `MIGRATE_TARGET=test` runs against the throwaway database the integration
+  // suite uses, so `pnpm db:test:setup` has something to migrate into.
+  const target = process.env['MIGRATE_TARGET'] === 'test' ? 'TEST_DATABASE_URL' : 'DATABASE_URL';
+  const connectionString = process.env[target];
   if (!connectionString) {
-    console.error('DATABASE_URL is not set');
+    console.error(`${target} is not set`);
     process.exit(1);
   }
 
