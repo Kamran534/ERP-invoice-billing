@@ -37,6 +37,16 @@ const toOrg = (row: OrgRow): Org => ({
   name: row.name,
   slug: row.slug,
   status: row.status,
+  legalName: row.legalName,
+  taxId: row.taxId,
+  email: row.email,
+  phone: row.phone,
+  website: row.website,
+  logoUrl: row.logoUrl,
+  address: (row.address as Org['address']) ?? null,
+  timezone: row.timezone,
+  locale: row.locale,
+  currency: row.currency,
   createdAt: row.createdAt,
 });
 
@@ -93,7 +103,12 @@ export function createOrgRepo(db: Database, deps: RepoDeps): OrgRepo {
 
         const [orgRow] = await tx
           .insert(orgs)
-          .values({ id: deps.uuid(), name: input.name, slug: input.slug })
+          .values({
+            id: deps.uuid(),
+            name: input.name,
+            slug: input.slug,
+            ...(input.profile ?? {}),
+          })
           .returning();
         const org = toOrg(orgRow!);
 
@@ -151,6 +166,21 @@ export function createOrgRepo(db: Database, deps: RepoDeps): OrgRepo {
       return row ? toOrg(row) : null;
     },
 
+    /**
+     * ⚑ Only the keys present in `patch` are written. Drizzle omits `undefined`
+     * from the SET clause, so "leave alone" and "clear to null" stay distinct —
+     * without that, a form that submits three fields would blank the other seven.
+     */
+    async updateProfile(id, patch) {
+      const [row] = await db
+        .update(orgs)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(orgs.id, id))
+        .returning();
+      if (!row) throw new Error(`org ${id} not found`);
+      return toOrg(row);
+    },
+
     async count() {
       const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(orgs);
       return row?.n ?? 0;
@@ -171,18 +201,18 @@ export function createMembershipRepo(db: Database, deps: RepoDeps): MembershipRe
     /**
      * ⚑ `status = 'active'` only. An invitation is not a tenancy: a pending
      * membership must never resolve into an access token (§10.8).
+     *
+     * At most one row can exist per user — `uq_memberships_user` guarantees it —
+     * so this is a lookup, not a list (§10.10).
      */
-    async listActiveForUser(userId) {
-      const rows = await db
+    async findActiveForUser(userId) {
+      const [row] = await db
         .select({ m: memberships, o: orgs, r: roles })
         .from(memberships)
         .innerJoin(orgs, eq(orgs.id, memberships.orgId))
         .innerJoin(roles, eq(roles.id, memberships.roleId))
-        .where(and(eq(memberships.userId, userId), eq(memberships.status, 'active')))
-        // Oldest first, so a returning user with several orgs lands somewhere
-        // predictable rather than wherever the planner felt like.
-        .orderBy(asc(memberships.joinedAt));
-      return rows.map((row) => view(row.m, row.o, row.r));
+        .where(and(eq(memberships.userId, userId), eq(memberships.status, 'active')));
+      return row ? view(row.m, row.o, row.r) : null;
     },
 
     async findActive(userId, orgId) {

@@ -524,20 +524,42 @@ describe('tenancy', () => {
     );
   });
 
-  it('lets one user belong to several orgs', async () => {
+  it('⚑ refuses a second organization for the same user', async () => {
     const { db } = handle;
     const user = await insertUser(db);
     const a = await insertOrgWithRole(db, { orgName: 'Acme' });
     const b = await insertOrgWithRole(db, { orgName: 'Globex' });
 
     await db.insert(schema.memberships).values({ id: uuidv7(), orgId: a.orgId, userId: user.id, roleId: a.roleId });
-    await db.insert(schema.memberships).values({ id: uuidv7(), orgId: b.orgId, userId: user.id, roleId: b.roleId });
+
+    // One user, one organization (§10.10) — enforced by `uq_memberships_user`, not
+    // by the application check beside it. A constraint that lives only in code is
+    // one concurrent request away from not existing, and is exactly the sort of
+    // thing a later admin script or bulk import forgets about.
+    //
+    // This test used to assert the opposite. Removing the index is the single
+    // change that re-enables multi-tenancy per user, and inverting this is how you
+    // find out you have done it.
+    // Asserting on `cause.constraint` rather than the message: drizzle wraps the
+    // driver error, so the message only says "failed query" and would pass for a
+    // null violation, a foreign key, or a typo in the test.
+    const rejection = await db
+      .insert(schema.memberships)
+      .values({ id: uuidv7(), orgId: b.orgId, userId: user.id, roleId: b.roleId })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(rejection).not.toBeNull();
+    expect((rejection as { cause?: { constraint?: string } }).cause?.constraint).toBe(
+      'uq_memberships_user',
+    );
 
     const rows = await db
       .select()
       .from(schema.memberships)
       .where(eq(schema.memberships.userId, user.id));
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
   });
 
   it('scopes role keys per org, so two orgs can both have "admin"', async () => {

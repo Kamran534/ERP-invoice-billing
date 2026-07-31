@@ -589,9 +589,8 @@ describe('organizations', () => {
     expect(await repos.roles.listForOrg(result.org.id)).toHaveLength(3);
     expect(await repos.roles.permissionsFor((await repos.roles.findByKey(result.org.id, 'owner'))!.id)).toEqual(['*']);
 
-    const memberships = await repos.memberships.listActiveForUser(user.id);
-    expect(memberships).toHaveLength(1);
-    expect(memberships[0]!.role.key).toBe('owner');
+    const membership = await repos.memberships.findActiveForUser(user.id);
+    expect(membership?.role.key).toBe('owner');
   });
 
   it('⚑ lets exactly one of two racing claims win a fresh instance', async () => {
@@ -656,7 +655,7 @@ describe('organizations', () => {
       status: 'invited',
     });
 
-    expect(await repos.memberships.listActiveForUser(b.id)).toHaveLength(0);
+    expect(await repos.memberships.findActiveForUser(b.id)).toBeNull();
     expect(await repos.memberships.listForOrg(result.org.id)).toHaveLength(2);
   });
 });

@@ -31,12 +31,12 @@ import {
   changeMemberRole,
   createOrganization,
   inviteMember,
+  getMyOrganization,
   listMembers,
-  listMyOrganizations,
   permits,
   removeMember,
   resolveAccess,
-  switchOrg,
+  updateOrganization,
 } from './orgs.js';
 
 let repos: InMemoryRepos;
@@ -145,15 +145,42 @@ describe('claiming a fresh instance', () => {
     await expectAuthError(bootstrap(provisioned), 'PERMISSION_DENIED');
   });
 
-  it('lets anyone create one under the SaaS policy, but only one', async () => {
+  it('lets anyone create one under the SaaS policy', async () => {
     const saas = buildContext(config({ orgs: { selfService: 'anyone' } }));
     const second = await verifiedUser('bob@example.test');
 
     await bootstrap(saas);
     await expect(bootstrap(saas, second, 'Bob Ltd')).resolves.toBeDefined();
-    // Already a member of one — a second would need an explicit product decision
-    // about which is "theirs".
-    await expectAuthError(bootstrap(saas, second, 'Bob Two'), 'CONFLICT');
+  });
+
+  it('⚑ refuses a second organization for the same user', async () => {
+    const saas = buildContext(config({ orgs: { selfService: 'anyone' } }));
+    await bootstrap(saas);
+
+    // One user, one organization (§10.10). `uq_memberships_user` would refuse this
+    // anyway; this is the answer a UI can act on rather than a 500.
+    await expectAuthError(bootstrap(saas, owner, 'Acme Two'), 'CONFLICT');
+  });
+
+  it('stores optional details given at creation', async () => {
+    const { org } = await createOrganization(ctx, {
+      userId: owner.id,
+      name: 'Acme Billing',
+      profile: {
+        taxId: '1234567-8',
+        phone: '+92 300 1234567',
+        currency: 'PKR',
+        address: { line1: '12 Mall Road', city: 'Lahore', country: 'PK' },
+      },
+      ...request,
+    });
+
+    expect(org.taxId).toBe('1234567-8');
+    expect(org.currency).toBe('PKR');
+    expect(org.address).toMatchObject({ city: 'Lahore', country: 'PK' });
+    // Anything not supplied stays null rather than becoming an empty string.
+    expect(org.legalName).toBeNull();
+    expect(org.website).toBeNull();
   });
 
   it('refuses a duplicate slug', async () => {
@@ -179,7 +206,7 @@ describe('claiming a fresh instance', () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe('what the token carries', () => {
   it('gives a user with no organization a real session and no permissions', async () => {
-    const access = await resolveAccess(ctx, owner.id, null);
+    const access = await resolveAccess(ctx, owner.id);
     // Authenticated, belongs to nothing. The client's move is to offer to create
     // one — not to treat them as signed out.
     expect(access).toEqual({ orgId: null, roles: [], perms: [] });
@@ -204,7 +231,7 @@ describe('what the token carries', () => {
 
     // A membership revoked mid-session must not leave the user carrying a dead
     // tenant, and must not lock them out of the ones they do still belong to.
-    const access = await resolveAccess(saas, owner.id, stale);
+    const access = await resolveAccess(saas, owner.id);
     expect(access.orgId).toBe(first.id);
   });
 
@@ -220,7 +247,7 @@ describe('what the token carries', () => {
     });
 
     // An invitation is not a tenancy.
-    expect(await resolveAccess(ctx, invitee.id, org.id)).toEqual({
+    expect(await resolveAccess(ctx, invitee.id)).toEqual({
       orgId: null,
       roles: [],
       perms: [],
@@ -241,48 +268,6 @@ describe('permission matching', () => {
     expect(permits([], 'invoice:write')).toBe(false);
     expect(permits(['invoice:read'], 'invoice:write')).toBe(false);
     expect(permits(['invoice:*'], 'payment:write')).toBe(false);
-  });
-});
-
-// ───────────────────────────────────────────────────────────────────────────
-describe('switching', () => {
-  it('⚑ mints an access token without touching the refresh chain', async () => {
-    const saas = buildContext(config({ orgs: { selfService: 'anyone' } }));
-    const { org: first } = await bootstrap(saas);
-    const session = await issueSession(saas, deps, { user: owner, amr: ['pwd'], ...request });
-    const refreshCount = repos.refreshTokens.all().length;
-
-    const result = await switchOrg(saas, {
-      userId: owner.id,
-      sessionId: session.session.id,
-      orgId: first.id,
-      ...request,
-    });
-
-    expect(result.accessToken).toBeTruthy();
-    // Switching org is not a new login. Rotating here would leave every tab that
-    // had not switched holding a spent token — indistinguishable from theft.
-    expect(repos.refreshTokens.all()).toHaveLength(refreshCount);
-    expect(await repos.sessions.findById(session.session.id)).toMatchObject({ id: session.session.id });
-  });
-
-  it('⚑ answers NOT_FOUND for an org you do not belong to', async () => {
-    const saas = buildContext(config({ orgs: { selfService: 'anyone' } }));
-    await bootstrap(saas);
-    const outsider = await verifiedUser('bob@example.test');
-    const { org: theirs } = await bootstrap(saas, outsider, 'Bob Ltd');
-    const session = await issueSession(saas, deps, { user: owner, amr: ['pwd'], ...request });
-
-    // Ownership before existence, so tenants cannot be enumerated.
-    await expectAuthError(
-      switchOrg(saas, {
-        userId: owner.id,
-        sessionId: session.session.id,
-        orgId: theirs.id,
-        ...request,
-      }),
-      'NOT_FOUND',
-    );
   });
 });
 
@@ -322,6 +307,29 @@ describe('invitations', () => {
     await expectAuthError(
       acceptInvite(ctx, deps, { userId: stranger.id, token, ...request }),
       'PERMISSION_DENIED',
+    );
+  });
+
+  it('⚑ refuses when the invitee already belongs to an organization', async () => {
+    const saas = buildContext(config({ orgs: { selfService: 'anyone' } }));
+    const { org } = await bootstrap(saas);
+    const elsewhere = await verifiedUser('bob@example.test');
+    await bootstrap(saas, elsewhere, 'Bob Ltd');
+
+    await inviteMember(saas, deps, {
+      inviterId: owner.id,
+      orgId: org.id,
+      email: 'bob@example.test',
+      roleKey: 'member',
+      ...request,
+    });
+    const token = mailer.sent.at(-1)!.text.match(/token=([^\s&]+)/)![1]!;
+
+    // One user, one organization. The unique index would refuse this too, but as a
+    // 500; this is the answer a client can render.
+    await expectAuthError(
+      acceptInvite(saas, deps, { userId: elsewhere.id, token, ...request }),
+      'CONFLICT',
     );
   });
 
@@ -519,9 +527,104 @@ describe('listing', () => {
       status: 'invited',
     });
 
-    expect(await listMyOrganizations(ctx, owner.id)).toHaveLength(1);
-    expect(await listMyOrganizations(ctx, invitee.id)).toHaveLength(0);
+    expect(await getMyOrganization(ctx, owner.id)).not.toBeNull();
+    expect(await getMyOrganization(ctx, invitee.id)).toBeNull();
     // The member list is for administrators, so it shows pending invitations too.
     expect(await listMembers(ctx, org.id)).toHaveLength(2);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+describe('the organization profile', () => {
+  it('fills in details after the fact', async () => {
+    const { org } = await bootstrap();
+
+    const updated = await updateOrganization(ctx, {
+      actorId: owner.id,
+      orgId: org.id,
+      patch: { taxId: '99-1234', phone: '+92 300 0000000', currency: 'PKR' },
+      ...request,
+    });
+
+    expect(updated.taxId).toBe('99-1234');
+    expect(updated.currency).toBe('PKR');
+  });
+
+  it('⚑ leaves fields alone unless they are in the patch', async () => {
+    const { org } = await bootstrap();
+    await updateOrganization(ctx, {
+      actorId: owner.id,
+      orgId: org.id,
+      patch: { taxId: '99-1234', website: 'https://acme.test' },
+      ...request,
+    });
+
+    const after = await updateOrganization(ctx, {
+      actorId: owner.id,
+      orgId: org.id,
+      patch: { phone: '+92 300 0000000' },
+      ...request,
+    });
+
+    // A settings form that renders three fields must not blank the other seven.
+    expect(after.taxId).toBe('99-1234');
+    expect(after.website).toBe('https://acme.test');
+    expect(after.phone).toBe('+92 300 0000000');
+  });
+
+  it('clears a field when the patch says null', async () => {
+    const { org } = await bootstrap();
+    await updateOrganization(ctx, {
+      actorId: owner.id,
+      orgId: org.id,
+      patch: { taxId: '99-1234' },
+      ...request,
+    });
+
+    const cleared = await updateOrganization(ctx, {
+      actorId: owner.id,
+      orgId: org.id,
+      patch: { taxId: null },
+      ...request,
+    });
+    // Absent and null are different, and both have to work.
+    expect(cleared.taxId).toBeNull();
+  });
+
+  it('⚑ refuses a member without org:update', async () => {
+    const { org } = await bootstrap();
+    const plain = await verifiedUser('bob@example.test');
+    const memberRole = await repos.roles.findByKey(org.id, 'member');
+    await repos.memberships.create({
+      orgId: org.id,
+      userId: plain.id,
+      roleId: memberRole!.id,
+      status: 'active',
+    });
+
+    await expectAuthError(
+      updateOrganization(ctx, {
+        actorId: plain.id,
+        orgId: org.id,
+        patch: { taxId: 'nope' },
+        ...request,
+      }),
+      'PERMISSION_DENIED',
+    );
+  });
+
+  it('records which fields changed, not what they became', async () => {
+    const { org } = await bootstrap();
+    await updateOrganization(ctx, {
+      actorId: owner.id,
+      orgId: org.id,
+      patch: { taxId: '99-1234', phone: '+92 300 0000000' },
+      ...request,
+    });
+
+    const [entry] = repos.audit.eventsOfType('org.updated');
+    // ⚑ The audit log records that the billing details changed, not what they
+    // changed to. It is not a second copy of the database.
+    expect(entry?.metadata).toEqual({ fields: ['taxId', 'phone'] });
   });
 });

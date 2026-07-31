@@ -10033,11 +10033,11 @@
     "/auth/orgs": {
       "post": {
         "operationId": "createOrganization",
-        "summary": "Create an organization",
+        "summary": "Create your organization",
         "tags": [
           "Auth · session"
         ],
-        "description": "Creates the organization, seeds its roles, and makes you its **owner** — all in one transaction, because an organization with no owner cannot be repaired through the API.\n\nWho may call this depends on `orgs.selfService`:\n\n* `first-user` *(default)* — only while no organization exists at all. The first person to finish verification claims the instance; everyone else joins by invitation.\n* `anyone` — any verified user who is not already a member of one.\n* `never` — always `403`.\n\n⚑ Your existing access token does **not** carry the new organization. Refresh, or read the token returned here, before calling anything org-scoped.\n\n**Rate limit:** 10 per hour per IP",
+        "description": "Creates the organization, seeds its roles, and makes you its **owner** — all in one transaction, because an organization with no owner cannot be repaired through the API.\n\nWho may call this depends on `orgs.selfService`:\n\n* `first-user` *(default)* — only while no organization exists at all. The first person to finish verification claims the instance; everyone else joins by invitation.\n* `anyone` — any verified user who does not already belong to one.\n* `never` — always `403`.\n\n⚑ One organization per user. Calling this while you already belong to one returns `409`.\n\nEvery detail beyond `name` is optional and can be filled in later with `PATCH /auth/orgs/current`. The response carries a fresh access token that already knows about the organization, so you do not have to refresh to use it.\n\n**Rate limit:** 10 per hour per IP",
         "requestBody": {
           "required": true,
           "content": {
@@ -10052,11 +10052,168 @@
                     "example": "Acme Billing"
                   },
                   "slug": {
-                    "description": "Derived from `name` when omitted.",
+                    "description": "Derived from `name` when omitted. Cannot be changed afterwards.",
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 60,
                     "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                  },
+                  "legalName": {
+                    "description": "Registered name, when it differs from the display name.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "taxId": {
+                    "description": "VAT / GST / NTN. Free text — every jurisdiction formats it differently.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email": {
+                    "description": "Billing contact, separate from any individual account.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 320,
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                        "description": "Email address. Compared case-insensitively.",
+                        "example": "ada@example.com"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "phone": {
+                    "example": "+92 300 1234567",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 40
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "website": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 300,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "logoUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "address": {
+                    "anyOf": [
+                      {
+                        "title": "OrgAddress",
+                        "type": "object",
+                        "properties": {
+                          "line1": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "line2": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "city": {
+                            "type": "string",
+                            "maxLength": 120
+                          },
+                          "region": {
+                            "description": "State, province or county.",
+                            "type": "string",
+                            "maxLength": 120
+                          },
+                          "postalCode": {
+                            "type": "string",
+                            "maxLength": 30
+                          },
+                          "country": {
+                            "description": "ISO 3166-1 alpha-2, uppercase.",
+                            "example": "PK",
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 2
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timezone": {
+                    "description": "IANA zone.",
+                    "example": "Asia/Karachi",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "locale": {
+                    "description": "BCP-47 tag.",
+                    "example": "en-PK",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "currency": {
+                    "description": "ISO 4217. The default an invoice is drawn in.",
+                    "example": "PKR",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -10097,7 +10254,7 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "URL-safe, derived from the name and unique across the instance.",
+                          "description": "URL-safe, derived from the name and unique across the instance. Not editable.",
                           "example": "acme-billing"
                         },
                         "status": {
@@ -10105,6 +10262,138 @@
                           "enum": [
                             "active",
                             "suspended"
+                          ]
+                        },
+                        "legalName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "taxId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "phone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logoUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "anyOf": [
+                            {
+                              "title": "OrgAddress",
+                              "type": "object",
+                              "properties": {
+                                "line1": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "line2": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "city": {
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "region": {
+                                  "description": "State, province or county.",
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "postalCode": {
+                                  "type": "string",
+                                  "maxLength": 30
+                                },
+                                "country": {
+                                  "description": "ISO 3166-1 alpha-2, uppercase.",
+                                  "example": "PK",
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 2
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "timezone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "locale": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "createdAt": {
@@ -10116,6 +10405,16 @@
                         "name",
                         "slug",
                         "status",
+                        "legalName",
+                        "taxId",
+                        "email",
+                        "phone",
+                        "website",
+                        "logoUrl",
+                        "address",
+                        "timezone",
+                        "locale",
+                        "currency",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -10425,14 +10724,16 @@
             }
           }
         }
-      },
+      }
+    },
+    "/auth/orgs/current": {
       "get": {
-        "operationId": "listOrganizations",
-        "summary": "Organizations you belong to",
+        "operationId": "getCurrentOrganization",
+        "summary": "Your organization",
         "tags": [
           "Auth · session"
         ],
-        "description": "Active memberships only — a pending invitation is not a tenancy and never appears here. An empty array means the account belongs to nothing yet; offer to create one.",
+        "description": "The full profile of the organization you belong to, with your role in it. `null` when you belong to none — that is an ordinary state, not an error: the account is authenticated and the client should offer to create one.",
         "security": [
           {
             "cookieAuth": [],
@@ -10450,91 +10751,237 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "organizations": {
-                      "type": "array",
-                      "items": {
-                        "title": "Membership",
-                        "type": "object",
-                        "properties": {
-                          "membershipId": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                          },
-                          "org": {
-                            "title": "Organization",
-                            "type": "object",
-                            "properties": {
-                              "id": {
-                                "type": "string",
-                                "format": "uuid",
-                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                              },
-                              "name": {
-                                "type": "string"
-                              },
-                              "slug": {
-                                "type": "string",
-                                "description": "URL-safe, derived from the name and unique across the instance.",
-                                "example": "acme-billing"
-                              },
-                              "status": {
-                                "type": "string",
-                                "enum": [
-                                  "active",
-                                  "suspended"
-                                ]
-                              },
-                              "createdAt": {
-                                "type": "string"
-                              }
+                    "membership": {
+                      "anyOf": [
+                        {
+                          "title": "Membership",
+                          "type": "object",
+                          "properties": {
+                            "membershipId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                             },
-                            "required": [
-                              "id",
-                              "name",
-                              "slug",
-                              "status",
-                              "createdAt"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "role": {
-                            "type": "string",
-                            "description": "Role key: `owner`, `admin`, `member`.",
-                            "example": "owner"
-                          },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "invited",
-                              "active",
-                              "suspended"
-                            ]
-                          },
-                          "joinedAt": {
-                            "anyOf": [
-                              {
-                                "type": "string"
+                            "org": {
+                              "title": "Organization",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "slug": {
+                                  "type": "string",
+                                  "description": "URL-safe, derived from the name and unique across the instance. Not editable.",
+                                  "example": "acme-billing"
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "legalName": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "taxId": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "phone": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "website": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "logoUrl": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "address": {
+                                  "anyOf": [
+                                    {
+                                      "title": "OrgAddress",
+                                      "type": "object",
+                                      "properties": {
+                                        "line1": {
+                                          "type": "string",
+                                          "maxLength": 200
+                                        },
+                                        "line2": {
+                                          "type": "string",
+                                          "maxLength": 200
+                                        },
+                                        "city": {
+                                          "type": "string",
+                                          "maxLength": 120
+                                        },
+                                        "region": {
+                                          "description": "State, province or county.",
+                                          "type": "string",
+                                          "maxLength": 120
+                                        },
+                                        "postalCode": {
+                                          "type": "string",
+                                          "maxLength": 30
+                                        },
+                                        "country": {
+                                          "description": "ISO 3166-1 alpha-2, uppercase.",
+                                          "example": "PK",
+                                          "type": "string",
+                                          "minLength": 2,
+                                          "maxLength": 2
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "timezone": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "locale": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "currency": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "createdAt": {
+                                  "type": "string"
+                                }
                               },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          }
+                              "required": [
+                                "id",
+                                "name",
+                                "slug",
+                                "status",
+                                "legalName",
+                                "taxId",
+                                "email",
+                                "phone",
+                                "website",
+                                "logoUrl",
+                                "address",
+                                "timezone",
+                                "locale",
+                                "currency",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "role": {
+                              "type": "string",
+                              "description": "Role key: `owner`, `admin`, `member`.",
+                              "example": "owner"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "invited",
+                                "active",
+                                "suspended"
+                              ]
+                            },
+                            "joinedAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "membershipId",
+                            "org",
+                            "role",
+                            "status",
+                            "joinedAt"
+                          ],
+                          "additionalProperties": false
                         },
-                        "required": [
-                          "membershipId",
-                          "org",
-                          "role",
-                          "status",
-                          "joinedAt"
-                        ],
-                        "additionalProperties": false
-                      }
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
-                    "organizations"
+                    "membership"
                   ],
                   "additionalProperties": false
                 }
@@ -10782,16 +11229,14 @@
             }
           }
         }
-      }
-    },
-    "/auth/token/switch-org": {
-      "post": {
-        "operationId": "switchOrg",
-        "summary": "Switch the active organization",
+      },
+      "patch": {
+        "operationId": "updateOrganization",
+        "summary": "Update the organization profile",
         "tags": [
           "Auth · session"
         ],
-        "description": "Mints a new access token scoped to another organization you belong to.\n\n⚑ No new refresh token and no new session — the identity has not changed. Rotating the chain here would leave every tab that had not switched holding a spent token, which is indistinguishable from theft (§5.5.4).",
+        "description": "Address, tax number, billing contact, logo, currency — the details an invoice needs.\n\n⚑ Omit a field to leave it alone; send `null` to clear it. The two are different, so a form that only renders three fields must send only those three.\n\n⚑ `slug` is not editable. It appears in invitation links and in whatever customers have bookmarked or scripted, so changing it is a migration rather than an edit.",
         "requestBody": {
           "required": true,
           "content": {
@@ -10799,15 +11244,169 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "orgId": {
+                  "name": {
                     "type": "string",
-                    "format": "uuid",
-                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "legalName": {
+                    "description": "Registered name, when it differs from the display name.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "taxId": {
+                    "description": "VAT / GST / NTN. Free text — every jurisdiction formats it differently.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email": {
+                    "description": "Billing contact, separate from any individual account.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 320,
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                        "description": "Email address. Compared case-insensitively.",
+                        "example": "ada@example.com"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "phone": {
+                    "example": "+92 300 1234567",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 40
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "website": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 300,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "logoUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "address": {
+                    "anyOf": [
+                      {
+                        "title": "OrgAddress",
+                        "type": "object",
+                        "properties": {
+                          "line1": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "line2": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "city": {
+                            "type": "string",
+                            "maxLength": 120
+                          },
+                          "region": {
+                            "description": "State, province or county.",
+                            "type": "string",
+                            "maxLength": 120
+                          },
+                          "postalCode": {
+                            "type": "string",
+                            "maxLength": 30
+                          },
+                          "country": {
+                            "description": "ISO 3166-1 alpha-2, uppercase.",
+                            "example": "PK",
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 2
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timezone": {
+                    "description": "IANA zone.",
+                    "example": "Asia/Karachi",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "locale": {
+                    "description": "BCP-47 tag.",
+                    "example": "en-PK",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "currency": {
+                    "description": "ISO 4217. The default an invoice is drawn in.",
+                    "example": "PKR",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
-                },
-                "required": [
-                  "orgId"
-                ]
+                }
               }
             }
           }
@@ -10829,13 +11428,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "accessToken": {
-                      "description": "`bearer` mode only; in cookie mode the `__Host-at` cookie is replaced.",
-                      "type": "string"
-                    },
-                    "expiresIn": {
-                      "type": "number"
-                    },
                     "org": {
                       "title": "Organization",
                       "type": "object",
@@ -10850,7 +11442,7 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "URL-safe, derived from the name and unique across the instance.",
+                          "description": "URL-safe, derived from the name and unique across the instance. Not editable.",
                           "example": "acme-billing"
                         },
                         "status": {
@@ -10858,6 +11450,138 @@
                           "enum": [
                             "active",
                             "suspended"
+                          ]
+                        },
+                        "legalName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "taxId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "phone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logoUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "anyOf": [
+                            {
+                              "title": "OrgAddress",
+                              "type": "object",
+                              "properties": {
+                                "line1": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "line2": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "city": {
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "region": {
+                                  "description": "State, province or county.",
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "postalCode": {
+                                  "type": "string",
+                                  "maxLength": 30
+                                },
+                                "country": {
+                                  "description": "ISO 3166-1 alpha-2, uppercase.",
+                                  "example": "PK",
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 2
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "timezone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "locale": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "createdAt": {
@@ -10869,13 +11593,22 @@
                         "name",
                         "slug",
                         "status",
+                        "legalName",
+                        "taxId",
+                        "email",
+                        "phone",
+                        "website",
+                        "logoUrl",
+                        "address",
+                        "timezone",
+                        "locale",
+                        "currency",
                         "createdAt"
                       ],
                       "additionalProperties": false
                     }
                   },
                   "required": [
-                    "expiresIn",
                     "org"
                   ],
                   "additionalProperties": false
@@ -10979,7 +11712,7 @@
               }
             }
           },
-          "404": {
+          "403": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -11177,7 +11910,7 @@
     "/auth/orgs/current/members": {
       "get": {
         "operationId": "listMembers",
-        "summary": "List members of the active organization",
+        "summary": "List members of your organization",
         "tags": [
           "Auth · session"
         ],
@@ -11565,11 +12298,11 @@
     "/auth/orgs/current/invites": {
       "post": {
         "operationId": "inviteMember",
-        "summary": "Invite someone to the active organization",
+        "summary": "Invite someone to your organization",
         "tags": [
           "Auth · session"
         ],
-        "description": "Emails a single-use invitation, valid for 7 days.\n\n⚑ You may only grant a role whose permissions are a subset of your own — an `admin` cannot invite an `owner`. The check runs again when the invitation is *accepted*, so a demoted inviter cannot still hand out what they used to hold.\n\n⚑ Answers `202` whether or not the address already has an account, for the same enumeration reason as registration.\n\n**Rate limit:** 30 per hour per IP",
+        "description": "Emails a single-use invitation, valid for 7 days.\n\n⚑ You may only grant a role whose permissions are a subset of your own — an `admin` cannot invite an `owner`. The check runs again when the invitation is *accepted*, so a demoted inviter cannot still hand out what they used to hold.\n\n**Rate limit:** 30 per hour per IP",
         "requestBody": {
           "required": true,
           "content": {
@@ -11930,7 +12663,7 @@
         "tags": [
           "Auth · session"
         ],
-        "description": "Requires being signed in **as the invited address**. ⚑ A forwarded invitation must not move a seat to whoever happened to open it, and forwarding is the normal case rather than the attack.",
+        "description": "Requires being signed in **as the invited address**. ⚑ A forwarded invitation must not move a seat to whoever happened to open it, and forwarding is the normal case rather than the attack.\n\n⚑ Returns `409` if you already belong to an organization — one user, one organization.\n\nThe response carries a fresh access token that already knows about the organization.",
         "requestBody": {
           "required": true,
           "content": {
@@ -11981,7 +12714,7 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "URL-safe, derived from the name and unique across the instance.",
+                          "description": "URL-safe, derived from the name and unique across the instance. Not editable.",
                           "example": "acme-billing"
                         },
                         "status": {
@@ -11989,6 +12722,138 @@
                           "enum": [
                             "active",
                             "suspended"
+                          ]
+                        },
+                        "legalName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "taxId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "phone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logoUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "anyOf": [
+                            {
+                              "title": "OrgAddress",
+                              "type": "object",
+                              "properties": {
+                                "line1": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "line2": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "city": {
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "region": {
+                                  "description": "State, province or county.",
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "postalCode": {
+                                  "type": "string",
+                                  "maxLength": 30
+                                },
+                                "country": {
+                                  "description": "ISO 3166-1 alpha-2, uppercase.",
+                                  "example": "PK",
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 2
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "timezone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "locale": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "createdAt": {
@@ -12000,11 +12865,24 @@
                         "name",
                         "slug",
                         "status",
+                        "legalName",
+                        "taxId",
+                        "email",
+                        "phone",
+                        "website",
+                        "logoUrl",
+                        "address",
+                        "timezone",
+                        "locale",
+                        "currency",
                         "createdAt"
                       ],
                       "additionalProperties": false
                     },
                     "role": {
+                      "type": "string"
+                    },
+                    "accessToken": {
                       "type": "string"
                     }
                   },
@@ -12066,6 +12944,54 @@
             }
           },
           "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
             "description": "Default Response",
             "content": {
               "application/json": {

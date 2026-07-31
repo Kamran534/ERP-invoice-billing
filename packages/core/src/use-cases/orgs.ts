@@ -10,7 +10,7 @@
 
 import { AuthError, errors } from '../errors.js';
 import { audit, emit, type AuthContext, type RequestContext } from '../context.js';
-import type { MembershipView, Org, OrgId, UserId } from '../ports.js';
+import type { MembershipView, Org, OrgId, OrgProfile, UserId } from '../ports.js';
 import type { CryptoDeps } from './deps.js';
 
 /** What a token needs to know about the caller's tenant. */
@@ -25,33 +25,64 @@ export const NO_ACCESS: ResolvedAccess = { orgId: null, roles: [], perms: [] };
 /**
  * §10.8 — what the access token should say, resolved fresh.
  *
- * ⚑ Called at login, at **every refresh**, and at org switch. Re-reading here is
- * what makes a role change take effect within one access-token lifetime instead of
- * at the user's next login, and it is the reason access tokens can be short and
- * carry their permissions inline.
+ * ⚑ Called at login and at **every refresh**. Re-reading here is what makes a role
+ * change take effect within one access-token lifetime instead of at the user's next
+ * login, and it is the reason access tokens can be short and carry their
+ * permissions inline.
+ *
+ * ⚑ There is nothing to choose between: a user belongs to one organization
+ * (§10.10). A session pointing at an org the user is no longer in simply resolves
+ * to whatever they are in now, or to nothing — a revoked membership must not leave
+ * a session carrying a dead tenant.
  */
-export async function resolveAccess(
-  ctx: AuthContext,
-  userId: UserId,
-  preferredOrgId: OrgId | null,
-): Promise<ResolvedAccess> {
+export async function resolveAccess(ctx: AuthContext, userId: UserId): Promise<ResolvedAccess> {
   if (ctx.config.tenancy === 'none') return NO_ACCESS;
 
-  const memberships = await ctx.repos.memberships.listActiveForUser(userId);
-  if (memberships.length === 0) return NO_ACCESS;
-
-  // ⚑ Fall back rather than fail when the preferred org is gone. A membership
-  // revoked mid-session must not leave the user carrying a dead tenant, and must
-  // not lock them out of the orgs they do still belong to.
-  const chosen =
-    (preferredOrgId ? memberships.find((m) => m.org.id === preferredOrgId) : undefined) ??
-    memberships[0]!;
+  const membership = await ctx.repos.memberships.findActiveForUser(userId);
+  if (!membership) return NO_ACCESS;
 
   return {
-    orgId: chosen.org.id,
-    roles: [chosen.role.key],
-    perms: await ctx.repos.roles.permissionsFor(chosen.role.id),
+    orgId: membership.org.id,
+    roles: [membership.role.key],
+    perms: await ctx.repos.roles.permissionsFor(membership.role.id),
   };
+}
+
+/**
+ * Mints an access token for an existing session, picking up whatever organization
+ * and permissions the user has *now*.
+ *
+ * Used after creating an organization or accepting an invitation: the caller's
+ * current token still says they belong to nothing, and making them refresh to
+ * discover otherwise is a round trip for no reason.
+ *
+ * ⚑ Access token only. No refresh rotation, no new session — nothing about the
+ * identity changed.
+ */
+export async function mintAccessForSession(
+  ctx: AuthContext,
+  userId: UserId,
+  sessionId: string,
+): Promise<{ accessToken: string; expiresIn: number }> {
+  const session = await ctx.repos.sessions.findById(sessionId);
+  if (!session || session.revokedAt) {
+    throw new AuthError('SESSION_REVOKED', 'This session has been signed out');
+  }
+
+  const access = await resolveAccess(ctx, userId);
+  if (access.orgId !== session.orgId) {
+    await ctx.repos.sessions.setOrg(session.id, access.orgId);
+  }
+
+  const minted = await ctx.tokens.mintAccess({
+    sub: userId,
+    sid: session.id,
+    org: access.orgId,
+    roles: access.roles,
+    perms: access.perms,
+    amr: session.amr,
+  });
+  return { accessToken: minted.token, expiresIn: minted.expiresIn };
 }
 
 /**
@@ -78,6 +109,8 @@ export interface CreateOrgInput extends RequestContext {
   userId: UserId;
   name: string;
   slug?: string;
+  /** Everything optional — an organization is usable with a name alone (§10.11). */
+  profile?: Partial<OrgProfile>;
 }
 
 export async function createOrganization(
@@ -103,8 +136,11 @@ export async function createOrganization(
     throw new AuthError('EMAIL_NOT_VERIFIED', 'Confirm your email address first');
   }
 
-  const existing = await ctx.repos.memberships.listActiveForUser(input.userId);
-  if (selfService === 'anyone' && existing.length > 0) {
+  // ⚑ Checked in every mode, not only under `anyone` (§10.10). One user, one
+  // organization — and the database agrees, via `uq_memberships_user`, so this is
+  // the friendly error rather than the only defence.
+  const existing = await ctx.repos.memberships.findActiveForUser(input.userId);
+  if (existing) {
     throw new AuthError('CONFLICT', 'You already belong to an organization');
   }
 
@@ -115,6 +151,7 @@ export async function createOrganization(
   const result = await ctx.repos.orgs.createWithOwner({
     name,
     slug,
+    ...(input.profile ? { profile: input.profile } : {}),
     ownerId: input.userId,
     roles: systemRoles,
     ownerRoleKey: ownerRole,
@@ -165,11 +202,50 @@ function normaliseSlug(source: string): string {
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
-export async function listMyOrganizations(
+export async function getMyOrganization(
   ctx: AuthContext,
   userId: UserId,
-): Promise<MembershipView[]> {
-  return ctx.repos.memberships.listActiveForUser(userId);
+): Promise<MembershipView | null> {
+  return ctx.repos.memberships.findActiveForUser(userId);
+}
+
+export interface UpdateOrgInput extends RequestContext {
+  actorId: UserId;
+  orgId: OrgId;
+  patch: Partial<OrgProfile> & { name?: string };
+}
+
+/**
+ * §10.11 — fill in the details after the fact.
+ *
+ * ⚑ The slug is deliberately not updatable here. It appears in invitation links
+ * and in anything a customer has bookmarked or scripted, so renaming it is a
+ * migration rather than an edit.
+ */
+export async function updateOrganization(ctx: AuthContext, input: UpdateOrgInput): Promise<Org> {
+  const membership = await ctx.repos.memberships.findActive(input.actorId, input.orgId);
+  if (!membership) throw new AuthError('NOT_FOUND', 'Organization not found');
+
+  const perms = await ctx.repos.roles.permissionsFor(membership.role.id);
+  if (!permits(perms, 'org:update')) throw errors.permissionDenied('org:update');
+
+  const org = await ctx.repos.orgs.updateProfile(input.orgId, input.patch);
+
+  await audit(ctx, {
+    event: 'org.updated',
+    actorType: 'user',
+    actorUserId: input.actorId,
+    orgId: input.orgId,
+    targetType: 'org',
+    targetId: input.orgId,
+    ip: input.ip,
+    userAgent: input.userAgent,
+    // ⚑ Field names only. An audit row records that the billing address changed,
+    // not what it changed to — the log is not a second copy of the database.
+    metadata: { fields: Object.keys(input.patch) },
+  });
+
+  return org;
 }
 
 export interface MemberView {
@@ -191,58 +267,6 @@ export async function listMembers(ctx: AuthContext, orgId: OrgId): Promise<Membe
     status: row.status,
     joinedAt: row.joinedAt,
   }));
-}
-
-// ── Switching ───────────────────────────────────────────────────────────────
-
-export interface SwitchOrgInput extends RequestContext {
-  userId: UserId;
-  sessionId: string;
-  orgId: OrgId;
-}
-
-/**
- * §10.9. ⚑ Mints an access token and nothing else — no new refresh token, no new
- * session. The identity did not change: same human, same device, same login.
- * Rotating the chain here would leave every tab that had not switched holding a
- * spent token, which is indistinguishable from theft (§5.5.4).
- */
-export async function switchOrg(
-  ctx: AuthContext,
-  input: SwitchOrgInput,
-): Promise<{ accessToken: string; expiresIn: number; org: Org }> {
-  const membership = await ctx.repos.memberships.findActive(input.userId, input.orgId);
-  // Ownership before existence: a distinct answer for "real org, not yours" would
-  // let anyone enumerate tenants.
-  if (!membership) throw new AuthError('NOT_FOUND', 'Organization not found');
-
-  const session = await ctx.repos.sessions.findById(input.sessionId);
-  if (!session || session.revokedAt) {
-    throw new AuthError('SESSION_REVOKED', 'This session has been signed out');
-  }
-
-  await ctx.repos.sessions.setOrg(session.id, input.orgId);
-
-  const access = await ctx.tokens.mintAccess({
-    sub: input.userId,
-    sid: session.id,
-    org: input.orgId,
-    roles: [membership.role.key],
-    perms: await ctx.repos.roles.permissionsFor(membership.role.id),
-    amr: session.amr,
-  });
-
-  await audit(ctx, {
-    event: 'org.switched',
-    actorType: 'user',
-    actorUserId: input.userId,
-    orgId: input.orgId,
-    sessionId: session.id,
-    ip: input.ip,
-    userAgent: input.userAgent,
-  });
-
-  return { accessToken: access.token, expiresIn: access.expiresIn, org: membership.org };
 }
 
 // ── Invitations (§5.14) ─────────────────────────────────────────────────────
@@ -356,8 +380,18 @@ export async function acceptInvite(
   const role = await ctx.repos.roles.findByKey(orgId, roleKey);
   if (!org || !role) throw new AuthError('CODE_EXPIRED', 'This invitation is no longer valid');
 
-  const already = await ctx.repos.memberships.findActive(input.userId, orgId);
-  if (already) return { org, role: already.role.key };
+  const already = await ctx.repos.memberships.findActiveForUser(input.userId);
+  if (already) {
+    // Already here — accepting again is a no-op rather than an error, because a
+    // double-clicked link is not a mistake worth reporting.
+    if (already.org.id === orgId) return { org, role: already.role.key };
+    // ⚑ In a different one. One user, one organization (§10.10) — and the unique
+    // index would refuse this anyway, as a 500 rather than something a UI can act on.
+    throw new AuthError(
+      'CONFLICT',
+      'You already belong to an organization — leave it before joining another',
+    );
+  }
 
   // ⚑ Re-checked at acceptance, not only at invite time (§5.14). An inviter
   // demoted in the days since must not still be able to hand out what they held.

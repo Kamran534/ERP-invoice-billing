@@ -5,13 +5,13 @@ updated: 2026-07-31
 
 # Testing
 
-**541 tests in three layers**, separated by what they need to run — because a suite
+**547 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
-| `unit` | `*.test.ts` | nothing | ~15 s | 338 |
-| `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~25 s | 102 |
+| `unit` | `*.test.ts` | nothing | ~15 s | 344 |
+| `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~30 s | 102 |
 | `e2e` | `*.e2e.test.ts` | full stack | ~60 s | 101 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages

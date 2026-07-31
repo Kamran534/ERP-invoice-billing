@@ -15,6 +15,20 @@
       "when": 1785517888759,
       "tag": "0001_panoramic_jamie_braddock",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785527042956,
+      "tag": "0002_black_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785527645639,
+      "tag": "0003_white_thing",
+      "breakpoints": true
     }
   ]
 }

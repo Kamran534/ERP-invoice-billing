@@ -41,9 +41,42 @@ export const orgs = pgTable(
     name: text('name').notNull(),
     slug: citext('slug').notNull(),
     status: text('status').notNull().default('active').$type<'active' | 'suspended'>(),
+
+    // ── Profile (§10.11) ───────────────────────────────────────────────────
+    // Every one of these is nullable: an organization is usable the moment it
+    // has a name, and demanding a tax number before someone can log in is how
+    // onboarding forms get abandoned. They are filled in later, from settings.
+    //
+    // Columns rather than a JSON blob because a billing system *reads* them —
+    // they end up on invoices, in payment-provider payloads and in exports —
+    // and a field you query, validate and render is not configuration.
+    /** Registered name, when it differs from the display name shown in the UI. */
+    legalName: text('legal_name'),
+    /** VAT / GST / ABN. Free text: every jurisdiction formats it differently. */
+    taxId: text('tax_id'),
+    /** Billing contact, deliberately separate from any individual's account. */
+    email: citext('email'),
+    phone: text('phone'),
+    website: text('website'),
+    logoUrl: text('logo_url'),
+    /**
+     * `{ line1, line2, city, region, postalCode, country }` — structured rather
+     * than one text blob, because invoices and tax rules need the country and
+     * the postal code on their own.
+     */
+    address: jsonb('address'),
+    /** IANA zone and BCP-47 tag, for dating and formatting documents. */
+    timezone: text('timezone'),
+    locale: text('locale'),
+    /** ISO 4217. The default an invoice is drawn in. */
+    currency: text('currency'),
+
     /** e.g. { requireMfa: true, allowedDomains: [...] } — per-org policy overrides. */
     settings: jsonb('settings').notNull().default({}),
+    /** ⚑ Host-app extension point. Policy goes in `settings`; profile goes above. */
+    profile: jsonb('profile').notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(now),
   },
   (t) => [uniqueIndex('uq_orgs_slug').on(t.slug)],
 );
@@ -134,6 +167,17 @@ export const memberships = pgTable(
   },
   (t) => [
     uniqueIndex('uq_memberships_org_user').on(t.orgId, t.userId),
+    /**
+     * ⚑ One organization per user (§10.10). The unique index is the enforcement,
+     * not the application check beside it — a constraint that lives only in code
+     * is one concurrent request away from not existing, and the shape of the data
+     * is exactly the sort of thing a later migration, an admin script or a bulk
+     * import forgets about.
+     *
+     * Removing this is the single change that re-enables multi-tenancy per user;
+     * everything else that assumed it is written to notice.
+     */
+    uniqueIndex('uq_memberships_user').on(t.userId),
     index('idx_memberships_user').on(t.userId),
   ],
 );
@@ -183,7 +227,8 @@ export const sessions = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    /** Active tenant; changed by /auth/token/switch-org without forking the chain. */
+    /** The tenant this session is acting in. One per user (§10.10), so it only
+     * changes when the membership does. */
     orgId: uuid('org_id').references(() => orgs.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(now),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().default(now),

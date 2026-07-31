@@ -61,7 +61,7 @@ export async function issueSession(
   // §10.8 — which tenant, and what they may do in it. A user who belongs to
   // nothing gets a real session with `org: null`; the client's move is to offer to
   // create one, not to treat them as unauthenticated.
-  const access_ = await resolveAccess(ctx, input.user.id, session.orgId);
+  const access_ = await resolveAccess(ctx, input.user.id);
   if (access_.orgId && access_.orgId !== session.orgId) {
     await ctx.repos.sessions.setOrg(session.id, access_.orgId);
   }

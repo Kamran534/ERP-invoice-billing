@@ -620,6 +620,17 @@ export function createInMemoryOrgRepos(clock: Clock = realClock): {
           name: input.name,
           slug: input.slug,
           status: 'active',
+          legalName: null,
+          taxId: null,
+          email: null,
+          phone: null,
+          website: null,
+          logoUrl: null,
+          address: null,
+          timezone: null,
+          locale: null,
+          currency: null,
+          ...(input.profile ?? {}),
           createdAt: clock.now(),
         };
         orgRows.set(org.id, org);
@@ -656,6 +667,15 @@ export function createInMemoryOrgRepos(clock: Clock = realClock): {
       async findById(id) {
         return orgRows.get(id) ?? null;
       },
+      async updateProfile(id, patch) {
+        const org = orgRows.get(id);
+        if (!org) throw new Error(`org ${id} not found`);
+        // Mirrors the SQL: undefined keys are absent from the object, so spread
+        // leaves those fields alone while an explicit null clears them.
+        const updated = { ...org, ...patch };
+        orgRows.set(id, updated);
+        return updated;
+      },
       async findBySlug(slug) {
         return [...orgRows.values()].find((o) => o.slug === slug) ?? null;
       },
@@ -665,12 +685,11 @@ export function createInMemoryOrgRepos(clock: Clock = realClock): {
     },
 
     memberships: {
-      async listActiveForUser(userId) {
-        return [...membershipRows.values()]
-          .filter((m) => m.userId === userId && m.status === 'active')
-          .sort((a, b) => (a.joinedAt?.getTime() ?? 0) - (b.joinedAt?.getTime() ?? 0))
-          .map(viewOf)
-          .filter((v): v is MembershipView => v !== null);
+      async findActiveForUser(userId) {
+        const row = [...membershipRows.values()].find(
+          (m) => m.userId === userId && m.status === 'active',
+        );
+        return row ? viewOf(row) : null;
       },
 
       async findActive(userId, orgId) {

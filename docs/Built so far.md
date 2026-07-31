@@ -90,6 +90,11 @@ All in `packages/core/src/use-cases/`, all unit-tested against in-memory ports.
 | `regenerateRecoveryCodes` | §5.4.4 | Replaces the whole set atomically; warns by email at ≤2 remaining |
 | trusted devices | §5.4.5 | Absolute 30-day cap with no sliding renewal, LRU-capped, never accepted for step-up |
 | `listSessions` / `revokeSession` | §5.6 | ⚑ Ownership checked before existence is admitted, so session ids cannot be enumerated |
+| `createOrganization` | §10.5 | ⚑ Org, roles and owner membership in one transaction under an advisory lock — an org with no owner cannot be repaired through the API |
+| `resolveAccess` | §10.8 | Runs on **every refresh**, which is what makes a role change land within one access-token lifetime |
+| `inviteMember` / `acceptInvite` | §5.14 | ⚑ You may only grant a role you hold, re-checked at acceptance so a demoted inviter cannot still hand it out |
+| `changeMemberRole` / `removeMember` | §10.7 | ⚑ Refuses to leave an org without an active owner |
+| `updateOrganization` | §10.11 | Optional profile — address, tax id, logo, currency. ⚑ An absent field is left alone; `null` clears it |
 
 Login also branches correctly into 2FA: it issues a client-bound challenge token
 that carries no `sid` and no permissions (§5.4.2), honours a trusted-device cookie
@@ -108,7 +113,7 @@ when policy requires a factor the user has not enrolled (§5.4.6).
 | `POST /auth/mfa/verify` | Live for `totp` and `recovery`; `email_otp` / `sms_otp` return `501` (§5.11) |
 | `GET /auth/mfa`, `POST /auth/mfa/totp/setup` and `/confirm`, `DELETE /auth/mfa/factors/{id}`, `POST /auth/mfa/recovery-codes` | Live |
 | `GET` and `DELETE /auth/trusted-devices` | Live |
-| `POST` and `GET /auth/orgs`, `POST /auth/token/switch-org` | Live |
+| `POST /auth/orgs`, `GET` and `PATCH /auth/orgs/current` | Live |
 | `/auth/orgs/current/members`, `/auth/orgs/current/invites`, `/auth/invites/accept` | Live |
 | `GET /auth/me`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}` | Live |
 | Password reset / change (§5.7, §5.8) | `501` |
@@ -122,7 +127,7 @@ have a factor is held to it, and a trusted device never satisfies it.
 
 ## Tests
 
-541 across three layers — see [[Testing]] for the split and the reasons for it.
+547 across three layers — see [[Testing]] for the split and the reasons for it.
 Coverage floors live in `vitest.config.ts` rather than in prose.
 
 ## Not built yet

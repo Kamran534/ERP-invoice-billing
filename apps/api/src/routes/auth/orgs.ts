@@ -1,10 +1,13 @@
 /**
- * Organizations, membership and tenant switching (§10.5–§10.9, §5.14).
+ * Organizations, membership and invitations (§10.5–§10.11, §5.14).
  *
  * ⚑ `orgId` is taken from the **verified token**, never from a path parameter or a
  * body field (§10.3). `/orgs/current/...` reads oddly next to a REST convention of
  * `/orgs/{id}/...`, and it is deliberate: a route that accepts the tenant from the
  * URL invites exactly one bug, and that bug is cross-tenant access.
+ *
+ * ⚑ There is no `switch-org`. A user belongs to one organization (§10.10), so
+ * there is nothing to switch to.
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -14,11 +17,14 @@ import {
   acceptInvite,
   changeMemberRole,
   createOrganization,
+  getMyOrganization,
   inviteMember,
   listMembers,
-  listMyOrganizations,
+  mintAccessForSession,
   removeMember,
-  switchOrg,
+  updateOrganization,
+  type Org,
+  type OrgProfile,
 } from '@auth/core';
 import { route, errorSchema } from '../../lib/schema.js';
 import { TAGS } from '../../plugins/swagger.js';
@@ -31,8 +37,7 @@ import {
   memberSummary,
   membershipSummary,
   organization,
-  switchOrgBody,
-  switchOrgResponse,
+  updateOrgBody,
 } from '../../schemas/orgs.js';
 import { setSessionCookies } from '../../lib/cookies.js';
 import { requestContext } from '../../lib/present.js';
@@ -42,13 +47,34 @@ const cookieSecurity: Array<Record<string, string[]>> = [
   { bearerAuth: [] },
 ];
 
-const presentOrg = (org: {
-  id: string;
-  name: string;
-  slug: string;
-  status: 'active' | 'suspended';
-  createdAt: Date;
-}) => ({ ...org, createdAt: org.createdAt.toISOString() });
+const presentOrg = (org: Org) => ({ ...org, createdAt: org.createdAt.toISOString() });
+
+/** The profile keys a client may set, so nothing else in a body can reach the row. */
+const PROFILE_KEYS = [
+  'legalName',
+  'taxId',
+  'email',
+  'phone',
+  'website',
+  'logoUrl',
+  'address',
+  'timezone',
+  'locale',
+  'currency',
+] as const satisfies ReadonlyArray<keyof OrgProfile>;
+
+/**
+ * ⚑ Picks only keys the caller actually sent. Copying the whole body would turn
+ * "update the phone number" into "clear everything the form did not render",
+ * because an absent key and an explicit `null` mean different things here.
+ */
+function pickProfile(body: Record<string, unknown>): Partial<OrgProfile> {
+  const patch: Record<string, unknown> = {};
+  for (const key of PROFILE_KEYS) {
+    if (key in body) patch[key] = body[key];
+  }
+  return patch as Partial<OrgProfile>;
+}
 
 export async function orgRoutes(app: FastifyInstance): Promise<void> {
   const { auth, authDeps } = app;
@@ -59,30 +85,32 @@ export async function orgRoutes(app: FastifyInstance): Promise<void> {
     if (!orgId) {
       throw new AuthError(
         'ORG_CONTEXT_REQUIRED',
-        'Select or create an organization before calling this',
+        'Create or join an organization before calling this',
       );
     }
     return orgId;
   }
 
-  // ── Creating and listing ──────────────────────────────────────────────────
+  // ── Creating and reading ──────────────────────────────────────────────────
   app.post(
     '/auth/orgs',
     {
       preHandler: app.requireAuth,
       config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
       schema: route({
-        summary: 'Create an organization',
+        summary: 'Create your organization',
         description:
           'Creates the organization, seeds its roles, and makes you its **owner** — all in one ' +
           'transaction, because an organization with no owner cannot be repaired through the API.\n\n' +
           'Who may call this depends on `orgs.selfService`:\n\n' +
           '* `first-user` *(default)* — only while no organization exists at all. The first person ' +
           'to finish verification claims the instance; everyone else joins by invitation.\n' +
-          '* `anyone` — any verified user who is not already a member of one.\n' +
+          '* `anyone` — any verified user who does not already belong to one.\n' +
           '* `never` — always `403`.\n\n' +
-          '⚑ Your existing access token does **not** carry the new organization. Refresh, or read ' +
-          'the token returned here, before calling anything org-scoped.',
+          '⚑ One organization per user. Calling this while you already belong to one returns `409`.\n\n' +
+          'Every detail beyond `name` is optional and can be filled in later with ' +
+          '`PATCH /auth/orgs/current`. The response carries a fresh access token that already ' +
+          'knows about the organization, so you do not have to refresh to use it.',
         tags: [TAGS.auth],
         operationId: 'createOrganization',
         security: cookieSecurity,
@@ -96,104 +124,96 @@ export async function orgRoutes(app: FastifyInstance): Promise<void> {
       }),
     },
     async (request, reply) => {
-      const body = request.body as { name: string; slug?: string };
+      const body = request.body as Record<string, unknown> & { name: string; slug?: string };
+
       const { org, role } = await createOrganization(auth, {
         userId: request.auth!.sub,
         name: body.name,
         ...(body.slug ? { slug: body.slug } : {}),
+        profile: pickProfile(body),
         ...requestContext(request),
       });
 
-      // The caller is now an owner, and their current token says otherwise.
-      // Switching immediately saves every client from having to know that.
-      const switched = await switchOrg(auth, {
-        userId: request.auth!.sub,
-        sessionId: request.auth!.sid,
-        orgId: org.id,
-        ...requestContext(request),
-      });
-
+      // The caller is an owner now, and the token in their hand says they belong
+      // to nothing. Minting here saves every client from having to know that.
+      const minted = await mintAccessForSession(auth, request.auth!.sub, request.auth!.sid);
       setSessionCookies(reply, auth.config, {
-        accessToken: switched.accessToken,
-        expiresIn: switched.expiresIn,
+        accessToken: minted.accessToken,
+        expiresIn: minted.expiresIn,
         csrfToken: authDeps.newSecret('csrf'),
       });
 
       return reply.code(201).send({
         org: presentOrg(org),
         role,
-        ...(auth.config.cookies.mode !== 'cookie' ? { accessToken: switched.accessToken } : {}),
+        ...(auth.config.cookies.mode !== 'cookie' ? { accessToken: minted.accessToken } : {}),
       });
     },
   );
 
   app.get(
-    '/auth/orgs',
+    '/auth/orgs/current',
     {
       preHandler: app.requireAuth,
       schema: route({
-        summary: 'Organizations you belong to',
+        summary: 'Your organization',
         description:
-          'Active memberships only — a pending invitation is not a tenancy and never appears here. ' +
-          'An empty array means the account belongs to nothing yet; offer to create one.',
+          'The full profile of the organization you belong to, with your role in it. ' +
+          '`null` when you belong to none — that is an ordinary state, not an error: the account ' +
+          'is authenticated and the client should offer to create one.',
         tags: [TAGS.auth],
-        operationId: 'listOrganizations',
+        operationId: 'getCurrentOrganization',
         security: cookieSecurity,
-        response: { 200: z.object({ organizations: z.array(membershipSummary) }), 401: errorSchema },
+        response: {
+          200: z.object({ membership: membershipSummary.nullable() }),
+          401: errorSchema,
+        },
       }),
     },
     async (request) => {
-      const rows = await listMyOrganizations(auth, request.auth!.sub);
+      const membership = await getMyOrganization(auth, request.auth!.sub);
       return {
-        organizations: rows.map((row) => ({
-          membershipId: row.membershipId,
-          org: presentOrg(row.org),
-          role: row.role.key,
-          status: row.status,
-          joinedAt: row.joinedAt?.toISOString() ?? null,
-        })),
+        membership: membership
+          ? {
+              membershipId: membership.membershipId,
+              org: presentOrg(membership.org),
+              role: membership.role.key,
+              status: membership.status,
+              joinedAt: membership.joinedAt?.toISOString() ?? null,
+            }
+          : null,
       };
     },
   );
 
-  app.post(
-    '/auth/token/switch-org',
+  app.patch(
+    '/auth/orgs/current',
     {
-      preHandler: app.requireAuth,
+      preHandler: app.requirePermission('org:update'),
       schema: route({
-        summary: 'Switch the active organization',
+        summary: 'Update the organization profile',
         description:
-          'Mints a new access token scoped to another organization you belong to.\n\n' +
-          '⚑ No new refresh token and no new session — the identity has not changed. Rotating the ' +
-          'chain here would leave every tab that had not switched holding a spent token, which is ' +
-          'indistinguishable from theft (§5.5.4).',
+          'Address, tax number, billing contact, logo, currency — the details an invoice needs.\n\n' +
+          '⚑ Omit a field to leave it alone; send `null` to clear it. The two are different, so a ' +
+          'form that only renders three fields must send only those three.\n\n' +
+          '⚑ `slug` is not editable. It appears in invitation links and in whatever customers have ' +
+          'bookmarked or scripted, so changing it is a migration rather than an edit.',
         tags: [TAGS.auth],
-        operationId: 'switchOrg',
+        operationId: 'updateOrganization',
         security: cookieSecurity,
-        body: switchOrgBody,
-        response: { 200: switchOrgResponse, 401: errorSchema, 404: errorSchema },
+        body: updateOrgBody,
+        response: { 200: z.object({ org: organization }), 401: errorSchema, 403: errorSchema },
       }),
     },
-    async (request, reply) => {
-      const { orgId } = request.body as { orgId: string };
-      const result = await switchOrg(auth, {
-        userId: request.auth!.sub,
-        sessionId: request.auth!.sid,
-        orgId,
+    async (request) => {
+      const body = request.body as Record<string, unknown> & { name?: string };
+      const org = await updateOrganization(auth, {
+        actorId: request.auth!.sub,
+        orgId: activeOrg(request),
+        patch: { ...pickProfile(body), ...(body.name !== undefined ? { name: body.name } : {}) },
         ...requestContext(request),
       });
-
-      setSessionCookies(reply, auth.config, {
-        accessToken: result.accessToken,
-        expiresIn: result.expiresIn,
-        csrfToken: authDeps.newSecret('csrf'),
-      });
-
-      return {
-        ...(auth.config.cookies.mode !== 'cookie' ? { accessToken: result.accessToken } : {}),
-        expiresIn: result.expiresIn,
-        org: presentOrg(result.org),
-      };
+      return { org: presentOrg(org) };
     },
   );
 
@@ -203,7 +223,7 @@ export async function orgRoutes(app: FastifyInstance): Promise<void> {
     {
       preHandler: app.requirePermission('member:read'),
       schema: route({
-        summary: 'List members of the active organization',
+        summary: 'List members of your organization',
         tags: [TAGS.auth],
         operationId: 'listMembers',
         security: cookieSecurity,
@@ -231,14 +251,12 @@ export async function orgRoutes(app: FastifyInstance): Promise<void> {
       preHandler: app.requirePermission('member:invite'),
       config: { rateLimit: { max: 30, timeWindow: '1 hour' } },
       schema: route({
-        summary: 'Invite someone to the active organization',
+        summary: 'Invite someone to your organization',
         description:
           'Emails a single-use invitation, valid for 7 days.\n\n' +
           '⚑ You may only grant a role whose permissions are a subset of your own — an `admin` ' +
           'cannot invite an `owner`. The check runs again when the invitation is *accepted*, so a ' +
-          'demoted inviter cannot still hand out what they used to hold.\n\n' +
-          '⚑ Answers `202` whether or not the address already has an account, for the same ' +
-          'enumeration reason as registration.',
+          'demoted inviter cannot still hand out what they used to hold.',
         tags: [TAGS.auth],
         operationId: 'inviteMember',
         security: cookieSecurity,
@@ -274,26 +292,45 @@ export async function orgRoutes(app: FastifyInstance): Promise<void> {
         description:
           'Requires being signed in **as the invited address**. ⚑ A forwarded invitation must not ' +
           'move a seat to whoever happened to open it, and forwarding is the normal case rather ' +
-          'than the attack.',
+          'than the attack.\n\n' +
+          '⚑ Returns `409` if you already belong to an organization — one user, one organization.\n\n' +
+          'The response carries a fresh access token that already knows about the organization.',
         tags: [TAGS.auth],
         operationId: 'acceptInvite',
         security: cookieSecurity,
         body: acceptInviteBody,
         response: {
-          200: z.object({ org: organization, role: z.string() }),
+          200: z.object({
+            org: organization,
+            role: z.string(),
+            accessToken: z.string().optional(),
+          }),
           403: errorSchema,
+          409: errorSchema,
           410: errorSchema,
         },
       }),
     },
-    async (request) => {
+    async (request, reply) => {
       const { token } = request.body as { token: string };
       const result = await acceptInvite(auth, authDeps, {
         userId: request.auth!.sub,
         token,
         ...requestContext(request),
       });
-      return { org: presentOrg(result.org), role: result.role };
+
+      const minted = await mintAccessForSession(auth, request.auth!.sub, request.auth!.sid);
+      setSessionCookies(reply, auth.config, {
+        accessToken: minted.accessToken,
+        expiresIn: minted.expiresIn,
+        csrfToken: authDeps.newSecret('csrf'),
+      });
+
+      return {
+        org: presentOrg(result.org),
+        role: result.role,
+        ...(auth.config.cookies.mode !== 'cookie' ? { accessToken: minted.accessToken } : {}),
+      };
     },
   );
 

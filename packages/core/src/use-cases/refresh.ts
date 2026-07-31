@@ -134,7 +134,7 @@ export async function rotateRefreshToken(
   // ⚑ Re-resolved on every rotation, not carried over from the previous token.
   // That is what makes a role change, a removed membership or a new permission
   // land within one access-token lifetime instead of at the next login (§10.8).
-  const access_ = await resolveAccess(ctx, user.id, session.orgId);
+  const access_ = await resolveAccess(ctx, user.id);
   if (access_.orgId !== session.orgId) {
     await ctx.repos.sessions.setOrg(session.id, access_.orgId);
   }

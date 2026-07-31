@@ -60,7 +60,7 @@ Argon2 verification to keep the timing honest, and there is a test for it.
 | Schema, repositories, crypto (AEAD, TOTP, tokens, hashing) | Built |
 | Register, verify, login, refresh, logout, `/auth/me`, device sessions | **Live over HTTP** — cookies, CSRF, rotation |
 | TOTP enrolment, challenge verify, recovery codes, trusted devices (§5.4) | **Live over HTTP** |
-| Organizations, roles, memberships, invitations, tenant switching (§10, §5.14) | **Live over HTTP** |
+| Organizations, roles, memberships, invitations, org profile (§10, §5.14) | **Live over HTTP** |
 | Password reset and change (§5.7, §5.8) | Contract published, handler returns `501` |
 | OTP (§5.11) | Contract published, handler returns `501` |
 

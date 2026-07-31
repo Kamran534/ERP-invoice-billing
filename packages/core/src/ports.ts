@@ -167,7 +167,36 @@ export interface RefreshTokenRepo {
 
 export type MembershipStatus = 'invited' | 'active' | 'suspended';
 
-export interface Org {
+export interface OrgAddress {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  /** ISO 3166-1 alpha-2. */
+  country?: string;
+}
+
+/**
+ * Everything about an organization beyond its identity (§10.11).
+ *
+ * ⚑ All optional. An organization is usable the moment it has a name; demanding
+ * a tax number before anyone can log in is how onboarding gets abandoned.
+ */
+export interface OrgProfile {
+  legalName: string | null;
+  taxId: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  logoUrl: string | null;
+  address: OrgAddress | null;
+  timezone: string | null;
+  locale: string | null;
+  currency: string | null;
+}
+
+export interface Org extends OrgProfile {
   id: OrgId;
   name: string;
   slug: string;
@@ -216,6 +245,7 @@ export interface OrgRepo {
   createWithOwner(input: {
     name: string;
     slug: string;
+    profile?: Partial<OrgProfile>;
     ownerId: UserId;
     roles: Array<{ key: string; name: string; permissions: string[] }>;
     ownerRoleKey: string;
@@ -224,12 +254,22 @@ export interface OrgRepo {
 
   findById(id: OrgId): Promise<Org | null>;
   findBySlug(slug: string): Promise<Org | null>;
+  /** Partial update of the profile fields. ⚑ `undefined` leaves a field alone; `null` clears it. */
+  updateProfile(id: OrgId, patch: Partial<OrgProfile> & { name?: string }): Promise<Org>;
   count(): Promise<number>;
 }
 
 export interface MembershipRepo {
-  /** Active memberships only — an invitation is not a tenancy. */
-  listActiveForUser(userId: UserId): Promise<MembershipView[]>;
+  /**
+   * The user's organization, or null.
+   *
+   * ⚑ Singular, not a list (§10.10). A user belongs to exactly one organization,
+   * and the *type* says so — an array here would leave every caller free to
+   * quietly assume otherwise, and eventually one of them would.
+   *
+   * Active only: an invitation is not a tenancy.
+   */
+  findActiveForUser(userId: UserId): Promise<MembershipView | null>;
   findActive(userId: UserId, orgId: OrgId): Promise<MembershipView | null>;
   listForOrg(orgId: OrgId): Promise<Array<MembershipView & { userId: UserId; email: string | null }>>;
   create(input: {

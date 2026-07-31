@@ -604,8 +604,9 @@ which defeats the entire purpose of having one.
 #### 5.5.2 Issuance
 Exactly one *unused* refresh token exists per session at any time. It is minted when a session is
 created — password login, MFA success, OAuth callback, passkey login, magic link, OTP login — and
-replaced on every use. ⚑ `switch-org` (§5.14) mints a new **access** token only: the session
-identity has not changed, so the refresh chain must not fork.
+replaced on every use. (⚑ `switch-org` is superseded by §10.10; had it existed it would have minted
+a new **access** token only, because the session identity does not change and the refresh chain
+must not fork.)
 
 #### 5.5.3 The rotation sequence
 
@@ -893,9 +894,8 @@ shape with §5.11 — it is the same engine with a long random token instead of 
   being logged in as that email (or registering with it). ⚑ Role in the token is validated against
   the inviter's own permissions at *acceptance* time too — a demoted inviter's pending invite can't
   grant more than they now hold.
-- `POST /auth/token/switch-org { orgId }` — verifies active membership, updates
-  `session.org_id`, mints an access token with the new `org` and permission set. ⚑ No new refresh
-  token; the session identity doesn't change.
+- ~~`POST /auth/token/switch-org`~~ — superseded by §10.10: a user belongs to one organization, so
+  there is nothing to switch to.
 
 ### 5.15 Support impersonation
 
@@ -1340,14 +1340,55 @@ Resolution:
 4. No `session.org_id` → the oldest active membership, so a returning user lands somewhere
    predictable.
 
-### 10.9 Switching organization
+### 10.9 Switching organization — **superseded by §10.10**
 
-`POST /auth/token/switch-org { orgId }` verifies an `active` membership, updates `session.org_id`,
-and mints a new access token.
+> [!warning] Not implemented. Kept because §5.5.6 and the cookie notes cite this number.
+> A user belongs to exactly one organization, so there is nothing to switch to. If multi-tenancy
+> per user is ever reinstated, this is the design: `POST /auth/token/switch-org { orgId }` verifies
+> an `active` membership, updates `session.org_id`, and mints a new access token — ⚑ with **no new
+> refresh token and no new session**, because the identity has not changed. Rotating the chain there
+> would leave every tab that had not switched holding a spent token, which is indistinguishable from
+> theft (§5.5.4).
 
-⚑ No new refresh token, and no new session. The identity did not change — the same human, the same
-device, the same login. Rotating the refresh chain here would mean every tab that had not switched
-suddenly holds a spent token, which is indistinguishable from theft (§5.5.4).
+### 10.10 One organization per user
+
+⚑ A user belongs to **exactly one** organization, enforced by a unique index on
+`auth_memberships(user_id)` — not by the application check beside it. A constraint that lives only
+in code is one concurrent request away from not existing, and the shape of the data is exactly the
+sort of thing a later migration, an admin script or a bulk import forgets about.
+
+What follows from it:
+
+- `MembershipRepo.findActiveForUser` returns `MembershipView | null`, not an array. The *type* says
+  it, so no caller is free to quietly assume otherwise — and eventually one would.
+- `resolveAccess` has nothing to choose between; a session pointing at an org the user has left
+  resolves to whatever they are in now, or to nothing.
+- Creating a second organization is `409`, in every `selfService` mode.
+- Accepting an invitation to a different organization is `409`. Accepting one to the organization
+  you are already in is a no-op, because a double-clicked link is not a mistake worth reporting.
+- There is no `/auth/token/switch-org`.
+
+Reversing this is one migration — drop `uq_memberships_user` — plus restoring the plural repository
+method. The schema integration test asserting the refusal is inverted from the one that used to
+assert the opposite, so flipping it back is how you find out you have done it.
+
+### 10.11 Organization profile
+
+An organization is usable the moment it has a name. Everything else is optional and set later:
+`legalName`, `taxId`, `email`, `phone`, `website`, `logoUrl`, `address`, `timezone`, `locale`,
+`currency`. ⚑ Demanding a tax number before anyone can sign in is how onboarding is abandoned.
+
+Columns rather than a JSON blob, because a billing system *reads* them — they end up on invoices,
+in payment-provider payloads and in exports — and a field you query, validate and render is not
+configuration. `settings` stays for policy overrides; `profile` remains the host-app extension point.
+
+`PATCH /auth/orgs/current` requires `org:update`. ⚑ Omitting a field leaves it alone; sending `null`
+clears it. The two must stay distinct, or a settings form that renders three fields blanks the other
+seven. ⚑ `slug` is not editable — it appears in invitation links and in whatever customers have
+bookmarked, so changing it is a migration rather than an edit.
+
+⚑ The audit row records *which* fields changed, never their values. The audit log is not a second
+copy of the database.
 
 
 ---
@@ -1367,7 +1408,7 @@ All under `/auth`. JSON in/out. Errors: `{ error: { code, message, details?, tra
 | POST | `/mfa/verify` | challenge | Complete 2FA (TOTP / OTP / recovery) → session |
 | POST | `/mfa/otp/send` | challenge | Send an OTP code as the *second* factor |
 | POST | `/token/refresh` | refresh | Rotate refresh chain + mint access token (§5.5.3) |
-| POST | `/token/switch-org` | access | Change active tenant |
+| ~~POST~~ | ~~`/token/switch-org`~~ | — | Superseded by §10.10 — one organization per user |
 | POST | `/logout` | access | Revoke current session |
 | POST | `/logout-all` | access + step-up | Revoke all sessions |
 | GET | `/me` | access | Current user, orgs, perms |
