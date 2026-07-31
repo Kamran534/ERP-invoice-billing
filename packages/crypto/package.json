@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
@@ -21,11 +23,12 @@
   "dependencies": {
     "@auth/core": "workspace:*",
     "@node-rs/argon2": "^2.0.2",
-    "jose": "^6.0.0"
+    "jose": "^6.0.0",
+    "otpauth": "^9.5.1"
   },
   "devDependencies": {
+    "rimraf": "^6.0.1",
     "typescript": "^5.8.0",
-    "vitest": "^3.0.0",
-    "rimraf": "^6.0.1"
+    "vitest": "^3.0.0"
   }
 }

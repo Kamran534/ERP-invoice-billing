@@ -1,6 +1,7 @@
 export * from './schema.js';
 export * from './pool.js';
 export * from './types.js';
+export * from './repos/index.js';
 
 /**
  * Re-exported so consumers write raw SQL through this package instead of taking

@@ -46,7 +46,8 @@ export interface User {
   phone: string | null;
   phoneVerifiedAt: Date | null;
   passwordHash: string | null;
-  passwordAlgo: string | null;
+  /** Narrow, so a legacy hash cannot be recorded under an invented algorithm name. */
+  passwordAlgo: 'argon2id' | 'bcrypt' | null;
   passwordUpdatedAt: Date | null;
   status: UserStatus;
   name: string | null;
@@ -135,11 +136,61 @@ export interface SessionRepo {
 
 export interface RefreshTokenRepo {
   issue(sessionId: SessionId, hash: Uint8Array, expiresAt: Date): Promise<RefreshTokenRow>;
-  /** ⚑ Must mark used and return the row in ONE atomic statement (§5.5.3 step 13). */
-  claim(hash: Uint8Array, graceMs: number): Promise<RefreshClaim>;
+  /**
+   * Read the row, then claim it with a guarded `UPDATE ... WHERE used_at IS NULL`
+   * (§5.5.3). The read-then-guard order is what separates the two cases that look
+   * identical afterwards: a row that was **already** used when we read it is reuse,
+   * while a guard that fails after a clean read means someone claimed it in
+   * between — a concurrent refresh, not theft.
+   *
+   * Returns a classification only. The grace-window policy lives in the use-case,
+   * because whether to forgive a re-presented predecessor is a decision, not a
+   * database fact.
+   */
+  claim(hash: Uint8Array): Promise<RefreshClaim>;
   link(tokenId: string, replacedById: string): Promise<void>;
   /** Kills the whole family — the point of rotation (§5.5.4). */
   revokeChain(sessionId: SessionId, reason: RevokeReason): Promise<number>;
+  findBySessionAndSuccessor(tokenId: string): Promise<RefreshTokenRow | null>;
+}
+
+// ── Second factors ──────────────────────────────────────────────────────────
+
+export type MfaFactorType = 'totp' | 'webauthn' | 'sms';
+
+export interface MfaFactor {
+  id: string;
+  userId: UserId;
+  type: MfaFactorType;
+  label: string | null;
+  secretEnc: Uint8Array | null;
+  confirmedAt: Date | null;
+  lastUsedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface MfaRepo {
+  addFactor(input: {
+    userId: UserId;
+    type: MfaFactorType;
+    label: string | null;
+    secretEnc: Uint8Array | null;
+  }): Promise<MfaFactor>;
+  findFactor(id: string): Promise<MfaFactor | null>;
+  /** Confirmed factors only — an unconfirmed one must never satisfy a challenge. */
+  listConfirmedFactors(userId: UserId): Promise<MfaFactor[]>;
+  listAllFactors(userId: UserId): Promise<MfaFactor[]>;
+  confirmFactor(id: string, at: Date): Promise<void>;
+  touchFactor(id: string, at: Date): Promise<void>;
+  removeFactor(id: string): Promise<void>;
+  /** Purges unconfirmed factors older than the cutoff (§5.4.1). */
+  purgeUnconfirmed(userId: UserId, olderThan: Date): Promise<number>;
+
+  /** Replaces the whole set atomically — regenerating invalidates every old code. */
+  replaceRecoveryCodes(userId: UserId, hashes: Uint8Array[]): Promise<void>;
+  /** ⚑ Single atomic consume; a code must never be usable twice. */
+  consumeRecoveryCode(userId: UserId, hash: Uint8Array): Promise<boolean>;
+  countUnusedRecoveryCodes(userId: UserId): Promise<number>;
 }
 
 export interface OneTimeTokenRepo {
