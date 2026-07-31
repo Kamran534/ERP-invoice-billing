@@ -423,9 +423,13 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       schema: route({
         summary: 'Current user, org context and permissions',
         description:
-          'The resolved identity for the presented access token. `permissions` is the effective ' +
-          'set for the active org — authorize your UI from this, but never trust it as an ' +
-          'enforcement boundary; the server re-checks every call.',
+          'Who you are, read live from the database — not from the token.\n\n' +
+          '`permissions` is the effective set for your organization. Authorize your UI from it, ' +
+          'but never treat it as an enforcement boundary; the server re-checks every call.\n\n' +
+          '⚑ **`staleToken: true`** means your access token was issued before your current ' +
+          'organization or role, so the API will still refuse what this response says you can do. ' +
+          'It happens right after creating an organization or accepting an invitation. Call ' +
+          '`POST /auth/token/refresh`, or use the token those endpoints hand back.',
         tags: [TAGS.auth],
         operationId: 'getMe',
         security: cookieSecurity,
@@ -434,6 +438,11 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
             user: publicUser,
             org: z.object({ id: uuidField, name: z.string(), role: z.string() }).nullable(),
             permissions: z.array(z.string()),
+            staleToken: z.boolean().meta({
+              description:
+                'Your token predates your current org or role. Refresh before acting on the ' +
+                'permissions above.',
+            }),
             amr: z.array(z.string()),
             mfaSatisfiedAt: z.string().nullable().meta({
               description: 'Drives step-up: if this is older than 15 minutes, sensitive calls will 403.',
@@ -450,21 +459,32 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
 
       const factors = await auth.repos.mfa.listConfirmedFactors(user.id);
 
-      // ⚑ From the token, not from a fresh lookup. `/auth/me` must describe the
-      // credential the caller is actually holding — if a role changed a minute ago
-      // the token still carries the old one until it is refreshed, and saying
-      // otherwise would have clients render permissions the API will refuse.
+      // ⚑ Live from the database, not from the token — and `staleToken` when they
+      // disagree.
+      //
+      // An earlier version read `claims.org` and `claims.perms`, reasoning that
+      // /auth/me should describe the credential in hand. It is defensible and it
+      // is baffling in practice: create an organization, call /auth/me, and be
+      // told you belong to nothing — because the token was minted before the
+      // organization existed and JWTs do not learn.
+      //
+      // So this answers "who am I" with the truth, and flags the one case where
+      // the API will refuse what that truth implies. A client seeing `staleToken`
+      // refreshes; a client ignoring it gets a `403` it can recover from. Both are
+      // better than a correct answer nobody can interpret.
       const claims = request.auth!;
-      const membership = claims.org
-        ? await auth.repos.memberships.findActive(user.id, claims.org)
-        : null;
+      const membership = await auth.repos.memberships.findActiveForUser(user.id);
+      const permissions = membership
+        ? await auth.repos.roles.permissionsFor(membership.role.id)
+        : [];
 
       return {
         user: presentUser(user, factors.length > 0),
         org: membership
           ? { id: membership.org.id, name: membership.org.name, role: membership.role.key }
           : null,
-        permissions: claims.perms ?? [],
+        permissions,
+        staleToken: (claims.org ?? null) !== (membership?.org.id ?? null),
         amr: session.amr,
         mfaSatisfiedAt: session.mfaSatisfiedAt?.toISOString() ?? null,
       };

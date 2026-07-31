@@ -1218,6 +1218,68 @@ describe('organizations', () => {
     return { email, bearer: { authorization: `Bearer ${body.session.accessToken}` } };
   }
 
+  it('⚑ reports the organization immediately, and flags the stale token', async () => {
+    const instance = await freshInstance();
+    try {
+      const first = await onboard(instance);
+
+      // Deliberately keeping the *login* token — the one minted before the
+      // organization existed.
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: first.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+
+      const me = json<{
+        org: { role: string } | null;
+        permissions: string[];
+        staleToken: boolean;
+      }>(await instance.inject({ method: 'GET', url: '/auth/me', headers: first.bearer }));
+
+      // Live truth: you own an organization, whatever your token believes. An
+      // earlier version read the claims and answered `org: null, permissions: []`
+      // seconds after a successful creation, which is correct about the credential
+      // and useless to anyone reading it.
+      expect(me.org).toMatchObject({ role: 'owner' });
+      expect(me.permissions).toEqual(['*']);
+      // ⚑ And the flag that says why the API will still refuse those permissions.
+      expect(me.staleToken).toBe(true);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('clears staleToken once the token catches up', async () => {
+    const instance = await freshInstance();
+    try {
+      const first = await onboard(instance);
+      const created = await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: first.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+      const fresh = json<{ accessToken: string }>(created).accessToken;
+
+      const me = json<{ staleToken: boolean; permissions: string[] }>(
+        await instance.inject({
+          method: 'GET',
+          url: '/auth/me',
+          headers: { authorization: `Bearer ${fresh}` },
+        }),
+      );
+
+      // The create response hands back a token that already knows, so a client
+      // that uses it never sees the stale state at all.
+      expect(me.staleToken).toBe(false);
+      expect(me.permissions).toEqual(['*']);
+    } finally {
+      await instance.close();
+    }
+  });
+
   it('⚑ makes the first user the owner of the organization they create', async () => {
     const instance = await freshInstance();
     try {

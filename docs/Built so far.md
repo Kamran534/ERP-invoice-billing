@@ -127,7 +127,7 @@ have a factor is held to it, and a trusted device never satisfies it.
 
 ## Tests
 
-547 across three layers — see [[Testing]] for the split and the reasons for it.
+551 across three layers — see [[Testing]] for the split and the reasons for it.
 Coverage floors live in `vitest.config.ts` rather than in prose.
 
 ## Not built yet

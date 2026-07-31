@@ -1330,6 +1330,12 @@ module never invents a permission for a domain it knows nothing about.
 effect within one access-token lifetime instead of at the user's next login, and it is the reason
 access tokens can be short and dumb.
 
+⚑ The corollary is that a token minted *before* a change does not carry it, and a JWT cannot learn.
+Create an organization and the token in your hand still says you belong to nothing. Two things stop
+that being baffling: `POST /auth/orgs` and `POST /auth/invites/accept` hand back a token that
+already knows, and `/auth/me` answers from the database with `staleToken: true` when the two
+disagree — the truth, plus the reason the API will still refuse it.
+
 Resolution:
 
 1. No membership anywhere → `org: null`, `roles: []`, `perms: []`. The user is authenticated and

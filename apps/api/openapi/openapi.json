@@ -3518,7 +3518,7 @@
         "tags": [
           "Auth · session"
         ],
-        "description": "The resolved identity for the presented access token. `permissions` is the effective set for the active org — authorize your UI from this, but never trust it as an enforcement boundary; the server re-checks every call.",
+        "description": "Who you are, read live from the database — not from the token.\n\n`permissions` is the effective set for your organization. Authorize your UI from it, but never treat it as an enforcement boundary; the server re-checks every call.\n\n⚑ **`staleToken: true`** means your access token was issued before your current organization or role, so the API will still refuse what this response says you can do. It happens right after creating an organization or accepting an invitation. Call `POST /auth/token/refresh`, or use the token those endpoints hand back.",
         "security": [
           {
             "cookieAuth": [],
@@ -3636,6 +3636,10 @@
                         "type": "string"
                       }
                     },
+                    "staleToken": {
+                      "type": "boolean",
+                      "description": "Your token predates your current org or role. Refresh before acting on the permissions above."
+                    },
                     "amr": {
                       "type": "array",
                       "items": {
@@ -3658,6 +3662,7 @@
                     "user",
                     "org",
                     "permissions",
+                    "staleToken",
                     "amr",
                     "mfaSatisfiedAt"
                   ],
