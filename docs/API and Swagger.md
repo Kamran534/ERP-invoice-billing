@@ -6,7 +6,7 @@ updated: 2026-07-31
 # API and Swagger
 
 Swagger UI at `/docs`, the document at `/docs/json` and `/docs/yaml`, a service
-index at `/`. **26 documented paths**, OpenAPI 3.1.
+index at `/`. **28 documented paths**, OpenAPI 3.1.
 
 ## One schema, three jobs
 
@@ -98,6 +98,41 @@ design, which 403 the client should act on — not just field names.
 
 No global `security` requirement: most auth endpoints are deliberately public and a
 blanket rule would document them wrongly. Each operation declares what it needs.
+
+### How CSRF is actually enforced
+
+An `onRequest` hook, before anything reads a session, on every unsafe method in
+cookie mode. The `csrf` cookie is set alongside the session cookies and is
+deliberately **not** `httpOnly` — the client has to be able to read it to echo it,
+and a cross-origin attacker can cause it to be *sent* but not *read*.
+
+Two carve-outs, both narrow:
+
+- **Routes that run before a session exists** — login, register, verify-email,
+  password reset, OTP and MFA verify. None of them acts on an existing session
+  using ambient credentials, which is the property that makes a route forgeable.
+- **⛑ Requests carrying no session cookie at all** are skipped rather than refused.
+  This is not the bypass it resembles: a cross-site attacker cannot *remove* the
+  victim's cookies, so a request with none provably cannot act on an ambient
+  credential. Refusing them instead breaks the two calls a client must always be
+  able to make with nothing in hand — logging out, and finding out that it is
+  logged out. The access and refresh cookies count too, so a request that carries
+  one of those without the CSRF cookie is still refused.
+
+### Where the tokens end up
+
+| | Cookie mode (default) | Bearer mode |
+|---|---|---|
+| Access token | `__Host-at`, `httpOnly`, `Path=/` | response body |
+| Refresh token | `__Host-rt`, `httpOnly`, **`Path=/auth/token`** | response body |
+| CSRF token | `csrf`, readable | not used |
+
+⛑ The refresh cookie's `Path` is load-bearing. Scoped to `/` it would ride along
+on every ordinary API call, so any request log, proxy, or mis-set CORS header on
+any route becomes an exposure of the one credential that mints new sessions.
+
+⛑ In cookie mode the tokens are **omitted from the body**, not merely ignored.
+Returning them as well would put the refresh token everywhere a response body goes.
 
 ## Error contract
 

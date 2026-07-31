@@ -61,12 +61,35 @@ allowances an API has no use for. An e2e test asserts the API CSP contains neith
 strips it unless `HTTPS_ENABLED`. Fixing helmet alone leaves the docs UI broken —
 they are tested separately for exactly this reason.
 
+## `Set-Cookie`, which is also a response header
+
+Three cookies, set together by `apps/api/src/lib/cookies.ts` and never by a
+handler directly — the flags *are* the security property, and they must not drift
+between the route that sets a cookie and the route that clears it.
+
+| Cookie | `HttpOnly` | `Path` | Why that path |
+|---|---|---|---|
+| `__Host-at` | yes | `/` | Sent on every API call, which is the point |
+| `__Host-rt` | yes | `/auth/token` | ⚑ Scoped, so the credential that mints sessions never rides along on ordinary requests |
+| `csrf` | **no** | `/` | ⚑ Readable on purpose — the client must echo it in a header, and a cross-origin attacker can cause it to be sent but not read |
+
+`Secure` on all three follows the same `HTTPS_ENABLED` flag as HSTS and the CSP
+upgrade ([[ADR-0008 Gate HTTPS-only headers behind one flag]]) — a `Secure` cookie
+over plain HTTP is silently dropped, and the resulting "login appears to do
+nothing" is genuinely unpleasant to diagnose.
+
+⚑ Clearing must repeat the exact `path` and `domain`. A browser treats
+`(name, domain, path)` as the identity, so clearing `__Host-rt` at `/` leaves the
+real one at `/auth/token` alive — a logout that returns `204` and signs nobody out.
+
 ## Not covered here
 
-CSRF (double-submit token), CORS allowlisting and rate limiting live in the same
-plugin but are part of the auth surface — see
-[[AUTH-MODULE-PLAN#8.3 Cookies & CSRF (cookie mode)]] and
+CORS allowlisting and rate limiting live in the same plugin but are part of the
+auth surface — see
 [[AUTH-MODULE-PLAN#8.2 Rate limiting (token bucket, per rule; Redis-backed in prod)]].
+How the CSRF check decides what to enforce is in
+[[API and Swagger#How CSRF is actually enforced]] and
+[[ADR-0010 Skip CSRF when a request carries no session cookie]].
 
 Response compression is deliberately absent —
 [[Performance and scaling#6. No response compression]].

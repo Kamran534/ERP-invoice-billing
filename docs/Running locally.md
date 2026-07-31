@@ -89,6 +89,14 @@ pnpm openapi               # write openapi/openapi.json for codegen or a CI diff
   those checks: `docker compose run --rm -e NODE_ENV=production api`.
 - **Unit tests need nothing.** If `pnpm test:int` complains, it will tell you
   exactly what to start — see [[Testing#Running without Docker]].
+- **Signing up needs outbound internet**, or it takes an extra 1.5 s. Every
+  password goes to the HIBP range API before it is accepted; without a route out,
+  the call times out, the check fails open with a warning, and signup proceeds.
+  Set `PASSWORD_BREACH_CHECK=false` to skip it deliberately rather than paying the
+  timeout — and read the ⚑ in `.env.example` before you do.
+- **Registration is capped at 5 per hour per IP.** Clicking through the signup form
+  half a dozen times while testing will earn you a `429` that looks like a bug. Use
+  a different address *and* a different client, or wait out the window.
 
 ## Related
 

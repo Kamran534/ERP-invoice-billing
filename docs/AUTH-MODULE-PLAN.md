@@ -1100,6 +1100,18 @@ Refresh cookie scoped to `Path=/auth/token`. ⚑ CSRF: double-submit token (rand
 readable cookie + `X-CSRF-Token` header) verified on every state-changing route, plus `Origin`
 header validation against the allowlist. `SameSite=Lax` alone is not sufficient defense.
 
+Two carve-outs, both narrow, both deliberate:
+
+1. **Pre-session routes** — login, register, verify-email, resend-verification, forgot/reset
+   password, OTP request/verify, MFA verify. ⚑ The property that makes a route forgeable is that it
+   acts on an *existing* session using ambient credentials; none of these do. Being under `/auth` is
+   not the test, and treating it as one would exempt logout and refresh, which are forgeable.
+2. **Requests carrying no session cookie at all** — not `csrf`, not the access cookie, not the
+   refresh cookie. ⚑ A cross-site attacker cannot *remove* the victim's cookies; the browser sends
+   whatever it holds. So a request arriving with none provably cannot act on an ambient credential,
+   and refusing it only breaks the two calls a client must be able to make with nothing in hand:
+   logging out, and discovering that it is logged out. See ADR-0010.
+
 ### 8.4 JWT hygiene
 ⚑ Pin accepted `alg` to the configured value — never trust the token header (`none`/HS-vs-RS
 confusion). ⚑ Resolve `kid` only against the local key store (no URL fetching from the token).

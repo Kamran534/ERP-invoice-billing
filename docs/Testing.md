@@ -5,14 +5,14 @@ updated: 2026-07-31
 
 # Testing
 
-**420 tests in three layers**, separated by what they need to run — because a suite
+**449 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
 | `unit` | `*.test.ts` | nothing | ~5 s | 268 |
-| `integration` | `*.int.test.ts` | Postgres, Mailpit | ~25 s | 91 |
-| `e2e` | `*.e2e.test.ts` | full stack | ~5 s | 61 |
+| `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~25 s | 96 |
+| `e2e` | `*.e2e.test.ts` | full stack | ~55 s | 85 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
 alias to their **source**, not `dist/`, so tests never need a prior build, coverage
@@ -158,6 +158,11 @@ If they pass individually, nothing is wrong with the code.
   the limiter was bypassed, mis-keyed, or erroring because its store was down.
 - **Timing-sensitive assertions take the minimum of N runs**, not the mean — the
   minimum approximates the uncontended cost and barely moves under load.
+- **⚑ Give each e2e test its own client address.** Rate limits key off
+  `request.ip` and `app.inject()` reports 127.0.0.1 for everything, so on one
+  address a suite shares a single five-registrations-per-hour bucket and fails as
+  429s that look like broken handlers. `remoteAddress` per test is also the more
+  honest model — these *are* different clients.
 - **⚑ Do not assert an ordering the code does not enforce.** A concurrency test that
   passes because your laptop happened to schedule the reads first is asserting an
   accident, and it will fail on a machine with different core counts — or, worse,
@@ -181,11 +186,31 @@ See [[Decisions]] for the full stories.
 - **`upgrade-insecure-requests` broke the docs UI** for every non-localhost
   visitor. Now covered by four tests, including one that checks the docs CSP
   separately from the API CSP — see [[Security headers]].
+- **⚑ The breach check was never wired.** `password.checkBreached` was `true`,
+  no `BreachChecker` was constructed, and the use-case treats a missing checker as
+  a third-party outage — so it failed open on every signup while the config read
+  "enabled". Caught the first time an e2e test registered with a corpus password.
+  The boot audit now refuses that combination outright.
 - **Refresh rotation called four legitimate tabs thieves.** Ten concurrent claims
   against real Postgres returned four `reuse` verdicts on CI and zero locally, for
   months, because the assertion depended on the connection pool's scheduling rather
   than on anything the code promised —
   [[ADR-0009 Decide refresh-token theft on recency, not on read ordering|ADR-0009]].
+
+## The one test that needs the internet
+
+`packages/crypto/src/breach.int.test.ts` talks to the real
+`api.pwnedpasswords.com`. Everything else in the integration project needs only
+Docker.
+
+It is deliberate: the thing worth verifying is the *protocol* — that a padded
+response's zero-count rows are not read as hits, that a `429` throws rather than
+returning "clean" — and a stub of HIBP would only assert that our stub matches our
+reading of the docs. The reading is the part that could be wrong.
+
+The corresponding e2e assertion tolerates a `202`, because the use-case fails open
+when the service is unreachable and a network blip must not turn into a red build.
+It is the integration test that holds the line.
 
 ## Related
 

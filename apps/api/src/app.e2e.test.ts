@@ -237,12 +237,6 @@ describe('JWKS', () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe('auth routes: contracts are live even where handlers are not', () => {
   const unimplemented: Array<[string, string, Record<string, unknown> | undefined, string]> = [
-    ['POST', '/auth/register', { email: 'ada@example.com', password: 'correct horse battery staple' }, '§5.1'],
-    ['POST', '/auth/login', { email: 'ada@example.com', password: 'correct horse battery staple' }, '§5.3'],
-    ['POST', '/auth/token/refresh', {}, '§5.5'],
-    ['POST', '/auth/logout', undefined, '§5.6'],
-    ['GET', '/auth/me', undefined, '§5.3'],
-    ['GET', '/auth/sessions', undefined, '§5.6'],
     ['POST', '/auth/password/forgot', { email: 'ada@example.com' }, '§5.7'],
     ['POST', '/auth/otp/request', { destination: 'ada@example.com' }, '§5.11'],
     ['POST', '/auth/otp/verify', { challengeId: '0191f0aa-0000-7000-8000-000000000000', code: '123456' }, '§5.11'],
@@ -270,16 +264,30 @@ describe('auth routes: contracts are live even where handlers are not', () => {
     },
   );
 
-  it('never returns a partially-authenticated response from a stub', async () => {
+  it('never returns a partially-authenticated response from a route that refused', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      payload: { email: 'ada@example.com', password: 'correct horse battery staple' },
+      payload: { email: 'nobody-at-all@example.test', password: 'correct horse battery staple' },
     });
-    // The failure mode to guard against: a stub that sets a cookie or returns a
-    // token shape while doing no verification at all.
+
+    // ⛑ The failure mode this guards against changed shape but not substance:
+    // it used to be a stub that set a cookie while verifying nothing, and it is
+    // now a handler that sets one on a path that should have refused.
+    expect(response.statusCode).toBe(401);
     expect(response.headers['set-cookie']).toBeUndefined();
     expect(response.payload).not.toMatch(/accessToken|refreshToken/);
+  });
+
+  it('answers the still-unbuilt routes with a pointer rather than a 404', async () => {
+    // The contract is published for routes whose handler is a later phase, so a
+    // client can generate against the final shape today.
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/password/forgot',
+      payload: { email: 'ada@example.com' },
+    });
+    expect(response.statusCode).toBe(501);
   });
 });
 
@@ -382,7 +390,13 @@ describe('error envelope', () => {
   });
 
   it('rejects a non-uuid path parameter', async () => {
-    const response = await app.inject({ method: 'DELETE', url: '/auth/sessions/not-a-uuid' });
+    // ⛑ With a CSRF pair, or the onRequest hook refuses at 403 before the
+    // schema is ever consulted — which would make this assert the wrong layer.
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/auth/sessions/not-a-uuid',
+      headers: { cookie: 'csrf=probe', 'x-csrf-token': 'probe' },
+    });
     expect(response.statusCode).toBe(400);
   });
 
@@ -396,8 +410,9 @@ describe('error envelope', () => {
         isAdmin: true, // a hopeful privilege-escalation attempt
       },
     });
-    // Reaching the handler (501) proves the extra field was removed, not honoured.
-    expect(response.statusCode).toBe(501);
+    // Reaching the handler proves the extra field was removed, not honoured: a
+    // 401 is the handler refusing an unknown account, which means it ran.
+    expect(response.statusCode).toBe(401);
   });
 
   it('rejects a non-JSON body with a typed error, not a stack trace', async () => {
@@ -630,8 +645,9 @@ describe('load shedding', () => {
         url: '/auth/login',
         payload: { email: 'ada@example.com', password: 'correct horse battery staple' },
       });
-      // 501 (handler reached) is the proof; a 503 here means the guard regressed.
-      expect(response.statusCode).toBe(501);
+      // Reaching the handler at all is the proof; a 503 here means the guard
+      // regressed. The 401 is just this unknown account being refused.
+      expect(response.statusCode).toBe(401);
     } finally {
       await probe.close();
     }

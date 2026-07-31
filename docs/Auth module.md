@@ -58,12 +58,13 @@ Argon2 verification to keep the timing honest, and there is a test for it.
 | `/health/live`, `/health/ready`, `/metrics`, `/` | Built |
 | `/.well-known/jwks.json` | Built |
 | Schema, repositories, crypto (AEAD, TOTP, tokens, hashing) | Built |
-| Use-cases: register, verify email, resend, password login, refresh rotation, logout, logout-all, session list/revoke | Built in `@auth/core`, unit-tested |
-| Everything under `/auth/*` | Contract published, handler still returns `501` |
+| Register, verify, login, refresh, logout, `/auth/me`, device sessions | **Live over HTTP** — cookies, CSRF, rotation |
+| Password reset and change (§5.7, §5.8) | Contract published, handler returns `501` |
+| OTP (§5.11) and 2FA (§5.4) endpoints | Contract published, handler returns `501` |
 
-⛑ The middle two rows and the last one are the current gap: the decisions are
-implemented and tested, but nothing is wired to HTTP yet, so no endpoint behaves
-differently from before. Cookies, CSRF and the auth guard are the next slice.
+⛑ Login can reach `mfa_required` but nothing can complete it, because
+`/auth/mfa/verify` is still a stub — harmless only because no factor can be
+enrolled yet. See [[Built so far]] for the route-by-route state.
 
 A 501 names the section that defines it:
 

@@ -12,6 +12,8 @@ import { randomUUID } from 'node:crypto';
 import type { Env } from './env.js';
 import { infraPlugin } from './plugins/infra.js';
 import { securityPlugin } from './plugins/security.js';
+import { authPlugin } from './plugins/auth.js';
+import { csrfPlugin } from './plugins/csrf.js';
 import { observabilityPlugin } from './plugins/observability.js';
 import { swaggerPlugin } from './plugins/swagger.js';
 import { errorsPlugin } from './plugins/errors.js';
@@ -121,6 +123,8 @@ export async function buildApp(
   await app.register(errorsPlugin);
   await app.register(infraPlugin, { env });
   await app.register(securityPlugin, { env });
+  await app.register(authPlugin);
+  await app.register(csrfPlugin);
   await app.register(observabilityPlugin, { env });
   await app.register(swaggerPlugin, { env });
 

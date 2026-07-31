@@ -3,20 +3,38 @@
  *
  * The contracts, status codes, rate limits and security requirements here are
  * final — they are what the OpenAPI document publishes and what clients build
- * against. The handler bodies are the Phase 1 work (AUTH-MODULE-PLAN.md §18) and
- * currently answer `501 NOT_IMPLEMENTED` with a pointer to the spec section, so
- * nothing silently half-authenticates anyone.
+ * against.
+ *
+ * The handlers are thin on purpose. Every decision lives in a `@auth/core`
+ * use-case; what belongs here is transport — which cookie, which status code,
+ * what shape goes on the wire. If a rule appears in this file, it is in the wrong
+ * file. The three password routes (§5.7, §5.8) still answer `501`.
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { errors } from '@auth/core';
+import {
+  AuthError,
+  errors,
+  listSessions,
+  login,
+  logout,
+  logoutAll,
+  register,
+  resendVerification,
+  revokeSession,
+  rotateRefreshToken,
+  verifyEmail,
+  type IssuedSession,
+  type User,
+} from '@auth/core';
 import { route } from '../../lib/schema.js';
 import { TAGS } from '../../plugins/swagger.js';
 import {
   authOutcome,
   changePasswordBody,
   deviceSession,
+  emailField,
   forgotPasswordBody,
   loginBody,
   okResponse,
@@ -29,6 +47,17 @@ import {
   uuidField,
 } from '../../schemas/auth.js';
 import { errorSchema } from '../../lib/schema.js';
+import {
+  clearSessionCookies,
+  readRefreshToken,
+  setSessionCookies,
+} from '../../lib/cookies.js';
+import {
+  presentDeviceSession,
+  presentSession,
+  presentUser,
+  requestContext,
+} from '../../lib/present.js';
 
 /**
  * Either transport satisfies these routes: cookies + CSRF header, or a bearer
@@ -40,6 +69,62 @@ const cookieSecurity: Array<Record<string, string[]>> = [
 ];
 
 export async function sessionRoutes(app: FastifyInstance): Promise<void> {
+  const { auth, authDeps } = app;
+
+  /**
+   * Turns an issued session into a reply: cookies set, body shaped for the
+   * transport. Every path that authenticates someone goes through here, so a new
+   * flow cannot forget the CSRF cookie or set the refresh cookie at the wrong
+   * `Path`.
+   */
+  async function respondWithSession(
+    reply: Parameters<typeof setSessionCookies>[0],
+    issued: IssuedSession,
+    user: User,
+  ) {
+    setSessionCookies(reply, auth.config, {
+      accessToken: issued.accessToken,
+      refreshToken: issued.refreshToken,
+      expiresIn: issued.expiresIn,
+      // A fresh, unguessable value per session. It is not a secret in the usual
+      // sense — an attacker just must not be able to *read* it cross-origin.
+      csrfToken: authDeps.newSecret('csrf'),
+    });
+
+    const factors = await auth.repos.mfa.listConfirmedFactors(user.id);
+    return presentSession(auth.config, issued, presentUser(user, factors.length > 0));
+  }
+
+  /**
+   * Step-up (§5.4.7): a sensitive action needs a second factor proven recently,
+   * not merely a live session.
+   *
+   * ⚑ Partial. A user with confirmed factors must have satisfied one inside
+   * `stepUpMaxAge`; a password-only user currently passes, because re-authenticating
+   * by password needs the `/auth/reauth` endpoint that lands with §5.8. Enforcing
+   * strictly today would make `logout-all` unreachable for everyone rather than
+   * safer for anyone.
+   */
+  async function assertStepUp(session: { userId: string; mfaSatisfiedAt: Date | null }) {
+    const factors = await auth.repos.mfa.listConfirmedFactors(session.userId);
+    if (factors.length === 0) return;
+
+    const satisfiedAt = session.mfaSatisfiedAt?.getTime() ?? 0;
+    if (Date.now() - satisfiedAt > auth.config.tokens.stepUpMaxAge) {
+      throw errors.reauthRequired(['totp', 'webauthn', 'email_otp']);
+    }
+  }
+
+  /** The session behind the presented access token, or 401. */
+  async function currentSession(request: FastifyRequest) {
+    const claims = request.auth!;
+    const session = await auth.repos.sessions.findById(claims.sid);
+    if (!session || session.revokedAt) {
+      throw new AuthError('SESSION_REVOKED', 'This session has been signed out');
+    }
+    return session;
+  }
+
   // ── Registration ─────────────────────────────────────────────────────────
   app.post(
     '/auth/register',
@@ -60,8 +145,75 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: { 202: registerResponse, 422: errorSchema },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.1 (Phase 1)');
+    async (request, reply) => {
+      const body = request.body as { email: string; password: string; name?: string };
+      const result = await register(auth, authDeps, { ...body, ...requestContext(request) });
+
+      // 202, not 201: nothing usable has been created from the caller's point of
+      // view, and a 201 would differ observably between "new" and "taken".
+      return reply.code(202).send({
+        status: result.status,
+        message: 'If that address can be registered, a verification link is on its way.',
+      });
+    },
+  );
+
+  // ── Email verification ──────────────────────────────────────────────────
+  app.post(
+    '/auth/verify-email',
+    {
+      config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+      schema: route({
+        summary: 'Confirm an email address',
+        description:
+          'Consumes the token from the verification link and activates the account.\n\n' +
+          'The token is single-use: a second call with the same token returns `410`, and so does a ' +
+          'token that never existed or has expired. The three cases are deliberately ' +
+          'indistinguishable — your UI should offer a resend for all of them.\n\n' +
+          '⚑ No session is issued. Verifying proves control of a mailbox, not of a password; ' +
+          'the client sends the user to log in.',
+        tags: [TAGS.auth],
+        operationId: 'verifyEmail',
+        rateLimit: '20 per hour per IP',
+        body: z.object({ token: z.string().min(20) }),
+        response: { 200: okResponse, 410: errorSchema },
+      }),
+    },
+    async (request) => {
+      const { token } = request.body as { token: string };
+      await verifyEmail(auth, authDeps, { token, ...requestContext(request) });
+      return { ok: true as const };
+    },
+  );
+
+  app.post(
+    '/auth/resend-verification',
+    {
+      config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
+      schema: route({
+        summary: 'Send the verification link again',
+        description:
+          'Always answers `202`, whether or not the address has an account and whether or not it ' +
+          'is already verified — this endpoint sends mail on demand, so an honest answer would ' +
+          'make it both an enumeration oracle and a way to have us mail a stranger repeatedly.\n\n' +
+          'Sending a new link invalidates any previous one.',
+        tags: [TAGS.auth],
+        operationId: 'resendVerification',
+        rateLimit: '5 per hour per IP',
+        body: z.object({ email: emailField }),
+        response: { 202: registerResponse },
+      }),
+    },
+    async (request, reply) => {
+      const { email } = request.body as { email: string };
+      const result = await resendVerification(auth, authDeps, {
+        email,
+        ...requestContext(request),
+      });
+      return reply.code(202).send({
+        status: result.status,
+        message: 'If that address needs verifying, a new link is on its way.',
+      });
     },
   );
 
@@ -90,8 +242,36 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: { 200: authOutcome, 401: errorSchema, 403: errorSchema, 423: errorSchema },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.3 (Phase 1)');
+    async (request, reply) => {
+      const body = request.body as { email: string; password: string; rememberDevice?: boolean };
+      const result = await login(auth, authDeps, {
+        email: body.email,
+        password: body.password,
+        trustedDeviceToken: request.cookies[auth.config.cookies.names.trustedDevice] ?? null,
+        ...requestContext(request),
+      });
+
+      if (result.status === 'mfa_required') {
+        // ⚑ 200, and no cookies. The first factor passed; nothing is
+        // authenticated. Setting a cookie here would make the second factor
+        // optional for anyone who ignores the response body.
+        return reply.code(200).send({
+          status: 'mfa_required',
+          mfaToken: result.mfaToken,
+          availableMethods: result.availableMethods,
+        });
+      }
+
+      const session = await respondWithSession(reply, result.session, result.user);
+
+      if (result.mfaEnrollmentRequired) {
+        return reply.code(200).send({
+          status: 'mfa_enrollment_required',
+          session,
+          enrollBy: result.mfaGraceEndsAt?.toISOString() ?? null,
+        });
+      }
+      return reply.code(200).send({ status: 'authenticated', session });
     },
   );
 
@@ -123,8 +303,44 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: { 200: refreshResponse, 401: errorSchema, 409: errorSchema },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.5 (Phase 1)');
+    async (request, reply) => {
+      const presented = readRefreshToken(
+        request,
+        auth.config,
+        request.body as { refreshToken?: string } | undefined,
+      );
+      if (!presented) throw errors.invalidRefreshToken();
+
+      let rotated;
+      try {
+        rotated = await rotateRefreshToken(auth, authDeps, {
+          presentedSecret: presented,
+          ...requestContext(request),
+        });
+      } catch (error) {
+        // ⚑ Clear the cookies on a dead session, but never on a 409. A client
+        // that loses the multi-tab race must keep its cookies — it is about to
+        // retry and pick up the winner's rotation.
+        if (error instanceof AuthError && error.status === 401) {
+          clearSessionCookies(reply, auth.config);
+        }
+        throw error;
+      }
+
+      setSessionCookies(reply, auth.config, {
+        accessToken: rotated.accessToken,
+        refreshToken: rotated.refreshToken,
+        expiresIn: rotated.expiresIn,
+        csrfToken: authDeps.newSecret('csrf'),
+      });
+
+      const bearer = auth.config.cookies.mode !== 'cookie';
+      return reply.code(200).send({
+        ...(bearer
+          ? { accessToken: rotated.accessToken, refreshToken: rotated.refreshToken }
+          : {}),
+        expiresIn: rotated.expiresIn,
+      });
     },
   );
 
@@ -146,14 +362,26 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: { 204: null },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.6 (Phase 1)');
+    async (request, reply) => {
+      // ⚑ No `requireAuth`. Logout must succeed for an expired or already-revoked
+      // session, or a client whose token just lapsed can never clear its cookies
+      // — and the 401 would tell an unauthenticated caller nothing useful anyway.
+      const token = request.cookies[auth.config.cookies.names.access];
+      const claims = token ? await app.tokens.verifyAccess(token).catch(() => null) : null;
+
+      if (claims) {
+        await logout(auth, { sessionId: claims.sid, ...requestContext(request) });
+      }
+
+      clearSessionCookies(reply, auth.config);
+      return reply.code(204).send();
     },
   );
 
   app.post(
     '/auth/logout-all',
     {
+      preHandler: app.requireAuth,
       schema: route({
         summary: 'Log out everywhere',
         description:
@@ -169,8 +397,18 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.6 (Phase 1)');
+    async (request, reply) => {
+      const session = await currentSession(request);
+      await assertStepUp(session);
+
+      const { revokedSessions } = await logoutAll(auth, {
+        userId: session.userId,
+        ...requestContext(request),
+      });
+
+      // The caller's own session is included, so its cookies go too.
+      clearSessionCookies(reply, auth.config);
+      return reply.code(200).send({ revokedSessions });
     },
   );
 
@@ -178,6 +416,10 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/auth/me',
     {
+      // ⚑ `requireAuth`, not `requireFullAuth`. A session quarantined by the 2FA
+      // policy must still be able to read itself — this is the endpoint the
+      // enrollment screen calls to find out that it is quarantined (§5.4.6).
+      preHandler: app.requireAuth,
       schema: route({
         summary: 'Current user, org context and permissions',
         description:
@@ -201,8 +443,23 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.3 / §10 (Phase 1)');
+    async (request) => {
+      const session = await currentSession(request);
+      const user = await auth.repos.users.findById(session.userId);
+      if (!user) throw new AuthError('ACCOUNT_INACTIVE', 'Account is not active');
+
+      const factors = await auth.repos.mfa.listConfirmedFactors(user.id);
+
+      return {
+        user: presentUser(user, factors.length > 0),
+        // Orgs, roles and permissions arrive with RBAC (§10). Publishing the
+        // fields as empty now keeps the contract honest and stops clients from
+        // building against a shape that is about to appear.
+        org: null,
+        permissions: [],
+        amr: session.amr,
+        mfaSatisfiedAt: session.mfaSatisfiedAt?.toISOString() ?? null,
+      };
     },
   );
 
@@ -210,6 +467,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/auth/sessions',
     {
+      preHandler: app.requireFullAuth,
       schema: route({
         summary: 'List signed-in devices',
         tags: [TAGS.auth],
@@ -218,14 +476,17 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: { 200: z.object({ sessions: z.array(deviceSession) }), 401: errorSchema },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.6 (Phase 1)');
+    async (request) => {
+      const session = await currentSession(request);
+      const views = await listSessions(auth, session.userId, session.id);
+      return { sessions: views.map(presentDeviceSession) };
     },
   );
 
   app.delete(
     '/auth/sessions/:id',
     {
+      preHandler: app.requireFullAuth,
       schema: route({
         summary: 'Sign out one device',
         description: 'Revokes another session by id. Revoking your own is equivalent to `/auth/logout`.',
@@ -236,8 +497,21 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: { 204: null, 401: errorSchema, 404: errorSchema },
       }),
     },
-    async () => {
-      throw errors.notImplemented('§5.6 (Phase 1)');
+    async (request, reply) => {
+      const session = await currentSession(request);
+      const { id } = request.params as { id: string };
+
+      await revokeSession(auth, {
+        userId: session.userId,
+        sessionId: id,
+        ...requestContext(request),
+      });
+
+      // Revoking your own session is equivalent to logging out, so the cookies
+      // must go with it — otherwise the client keeps a refresh token for a
+      // session the server has already killed.
+      if (id === session.id) clearSessionCookies(reply, auth.config);
+      return reply.code(204).send();
     },
   );
 

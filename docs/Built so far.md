@@ -9,11 +9,11 @@ updated: 2026-07-31
 An inventory of what actually exists, as opposed to what is specified. The spec is
 [[AUTH-MODULE-PLAN]] and is complete; this note is the part of it that runs.
 
-> [!warning] The gap that matters
-> Every auth **decision** below is implemented and tested in `@auth/core`, and every
-> `/auth/*` **endpoint** still answers `501`. Nothing is wired to HTTP yet, so from
-> the outside the service behaves exactly as it did before this work started.
-> Cookies, CSRF and the auth guard are the next slice.
+> [!info] Where the line is
+> Sign up, verify, log in, refresh, read yourself, list devices and sign out are
+> **live over HTTP** — real cookies, real CSRF, real rotation. Password reset,
+> password change, the OTP engine and the 2FA endpoints still answer `501` with a
+> pointer to the section that specifies them.
 
 ## Where the code lives
 
@@ -24,7 +24,7 @@ An inventory of what actually exists, as opposed to what is specified. The spec 
 | `@auth/db` | `@auth/core` | Drizzle schema (19 tables) and the Postgres repositories |
 | `@auth/mail` | `@auth/core` | Nodemailer transport and templates |
 | `@auth/testing` | `@auth/core` | In-memory doubles for every port, `FakeClock`, DB harness |
-| `@app/api` | everything | Fastify app, OpenAPI, health, metrics, JWKS, `501` stubs |
+| `@app/api` | everything | Fastify app, OpenAPI, cookies, CSRF, the auth guard, health, metrics, JWKS |
 
 The one-directional rule is the whole point — see
 [[ADR-0006 Ports and adapters for portability]]. `core` imports nothing, so every
@@ -36,7 +36,11 @@ use-case is testable with no database, no containers and no wall-clock.
   `verbatimModuleSyntax`.
 - **HTTP** — Fastify 5, OpenAPI 3.1 generated from the same zod schemas that
   validate ([[ADR-0005 Zod as the single source for validation, serialization and docs]]),
-  Swagger UI at `/docs`.
+  Swagger UI at `/docs`, 28 documented paths.
+- **Auth transport** — `__Host-at` / `__Host-rt` / `csrf` cookies with the refresh
+  cookie scoped to `/auth/token`, double-submit CSRF
+  ([[ADR-0010 Skip CSRF when a request carries no session cookie]]), and a guard
+  that enforces the 2FA enrollment quarantine.
 - **Reliability** — load shedding we own rather than the plugin's
   ([[ADR-0004 Own the load-shedding decision]]), Redis-backed rate limiting,
   `/health/live` and `/health/ready` split, Prometheus metrics.
@@ -66,6 +70,7 @@ that preserve the audit trail. Covered by [[Testing#Integration]].
 | TOTP (RFC 6238) | `verify()` returns the matched timestep — ⚑ without it, ±1 drift is a 90-second replay window |
 | UUIDv7 | Time-sortable, so inserts land at the right edge of the index |
 | CSPRNG digits | Rejection sampling, never modulo ([[Glossary]]) |
+| HIBP breach check | k-anonymity — five hex characters of the SHA-1 leave the process, nothing else |
 
 ## Auth use-cases
 
@@ -87,16 +92,34 @@ that carries no `sid` and no permissions (§5.4.2), honours a trusted-device coo
 without ever setting `mfaSatisfiedAt` (§5.4.5), and quarantines rather than refuses
 when policy requires a factor the user has not enrolled (§5.4.6).
 
+## HTTP
+
+| Route | State |
+|---|---|
+| `POST /auth/register` | Live — 202 whether or not the address is taken |
+| `POST /auth/verify-email`, `POST /auth/resend-verification` | Live |
+| `POST /auth/login` | Live — returns `authenticated`, `mfa_required` or `mfa_enrollment_required` |
+| `POST /auth/token/refresh` | Live — rotates, and 409s the multi-tab race |
+| `POST /auth/logout`, `POST /auth/logout-all` | Live |
+| `GET /auth/me`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}` | Live |
+| Password reset / change (§5.7, §5.8) | `501` |
+| OTP engine (§5.11), 2FA endpoints (§5.4) | `501` |
+
+⚑ `mfa_required` is reachable but not completable: login issues the challenge
+token, and `/auth/mfa/verify` is still a `501`. A deployment with a confirmed TOTP
+factor would be unable to finish signing in — which is fine today because nothing
+can enroll one yet, and is the reason 2FA is the next slice rather than a later one.
+
 ## Tests
 
-420 across three layers — see [[Testing]] for the split and the reasons for it.
+449 across three layers — see [[Testing]] for the split and the reasons for it.
 Coverage floors live in `vitest.config.ts` rather than in prose.
 
 ## Not built yet
 
-- **The HTTP layer for all of the above** — cookies, CSRF, the auth guard. This is
-  the next slice and the reason `/auth/*` still returns `501`.
-- Password reset and change (§5.7, §5.8).
+- Password reset and change (§5.7, §5.8), and with them `/auth/reauth` — which is
+  why step-up is only partially enforced: a password-only session currently passes
+  the check on `logout-all` because there is no way for it to re-authenticate.
 - The OTP engine (§5.11) and the 2FA endpoints (§5.4) — the *challenge* is issued
   by `login`, but nothing verifies one yet.
 - RBAC, orgs and permissions (§10). `mfa.enforce: 'admins'` currently falls back to

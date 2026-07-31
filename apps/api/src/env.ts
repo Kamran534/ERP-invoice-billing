@@ -82,6 +82,14 @@ export const envSchema = z.object({
   REFRESH_IDLE_TTL_S: int(2_592_000),
   REFRESH_ABSOLUTE_TTL_S: int(7_776_000),
 
+  /**
+   * ⚑ Off means known-breached passwords are accepted. It exists because an
+   * air-gapped deployment cannot reach api.pwnedpasswords.com and would otherwise
+   * pay the timeout on every signup — not because it is a reasonable default.
+   */
+  PASSWORD_BREACH_CHECK: bool.default(true),
+  PASSWORD_BREACH_TIMEOUT_MS: int(1_500),
+
   ARGON2_MEMORY_KIB: int(19_456),
   ARGON2_TIME_COST: int(2),
   ARGON2_PARALLELISM: int(1),

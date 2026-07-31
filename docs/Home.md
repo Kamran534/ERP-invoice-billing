@@ -35,13 +35,13 @@ it reads fine on GitHub too — the wikilinks just render as literal `[[text]]` 
 
 [[Built so far]] is the inventory — what exists, as opposed to what is specified.
 
-The short version: the auth **decisions** are implemented and unit-tested in
-`@auth/core` (register, verify, password login, refresh rotation, logout, sessions),
-and the auth **endpoints** still answer `501 NOT_IMPLEMENTED` with a pointer to the
-spec section that defines them. Nothing is wired to HTTP yet.
+The short version: sign up, verify, log in, refresh, `/auth/me`, device sessions
+and sign out are **live over HTTP** — real cookies, real CSRF, real rotation.
+Password reset, password change, the OTP engine and the 2FA endpoints still answer
+`501 NOT_IMPLEMENTED` with a pointer to the spec section that defines them.
 
-Next up is the HTTP layer for Phase 1: cookies, CSRF and the auth guard
-([[AUTH-MODULE-PLAN#18. Delivery phases]]).
+Next up is 2FA ([[AUTH-MODULE-PLAN#18. Delivery phases]]), because login can
+already reach `mfa_required` and nothing can complete it yet.
 
 ## Keeping this vault true
 
