@@ -9,3 +9,4 @@ export * from './use-cases/session.js';
 export * from './use-cases/register.js';
 export * from './use-cases/login.js';
 export * from './use-cases/mfa.js';
+export * from './use-cases/orgs.js';

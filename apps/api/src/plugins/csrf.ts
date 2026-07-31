@@ -7,7 +7,7 @@
  */
 
 import fp from 'fastify-plugin';
-import { AuthError, type AccessClaims } from '@auth/core';
+import { AuthError, errors, permits, type AccessClaims } from '@auth/core';
 import { timingSafeEquals } from '@auth/crypto';
 import { readAccessToken, readCookie } from '../lib/cookies.js';
 
@@ -20,6 +20,13 @@ declare module 'fastify' {
      * 2FA enrollment policy. Use on everything except the enrollment endpoints.
      */
     requireFullAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    /**
+     * preHandler factory: `requireFullAuth`, plus the named permission from the
+     * token's `perms` claim (§10.1–§10.2).
+     */
+    requirePermission: (
+      permission: string,
+    ) => (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {
     /** Present once `requireAuth` has run. */
@@ -112,6 +119,23 @@ export const csrfPlugin = fp(
         throw new AuthError('TOKEN_INVALID', 'Invalid or expired token');
       }
     });
+
+    /**
+     * ⚑ An HTTP guard is the outer layer, never the only one. Internal callers
+     * bypass it entirely, so the service layer re-checks with `permits()` — see
+     * §10.2.
+     */
+    app.decorate(
+      'requirePermission',
+      (permission: string) => async (request: FastifyRequest, reply: FastifyReply) => {
+        await app.requireFullAuth(request, reply);
+
+        const perms = request.auth?.perms ?? [];
+        // ⚑ Default deny. No org context means no permissions, which is the correct
+        // answer for a user who has not created or joined one yet — not a 500.
+        if (!permits(perms, permission)) throw errors.permissionDenied(permission);
+      },
+    );
 
     app.decorate('requireFullAuth', async (request: FastifyRequest, reply: FastifyReply) => {
       await app.requireAuth(request, reply);

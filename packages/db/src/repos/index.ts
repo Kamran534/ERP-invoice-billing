@@ -11,12 +11,14 @@ import { createAuditRepo, createUserRepo } from './users.js';
 import { createRefreshTokenRepo, createSessionRepo } from './sessions.js';
 import { createOneTimeTokenRepo, createOtpChallengeRepo } from './tokens.js';
 import { createMfaRepo, createTrustedDeviceRepo } from './mfa.js';
+import { createMembershipRepo, createOrgRepo, createRoleRepo } from './orgs.js';
 
 export * from './deps.js';
 export * from './users.js';
 export * from './sessions.js';
 export * from './tokens.js';
 export * from './mfa.js';
+export * from './orgs.js';
 
 export function createRepos(db: Database, deps: RepoDeps) {
   return {
@@ -27,6 +29,9 @@ export function createRepos(db: Database, deps: RepoDeps) {
     otpChallenges: createOtpChallengeRepo(db, deps),
     mfa: createMfaRepo(db, deps),
     trustedDevices: createTrustedDeviceRepo(db, deps),
+    orgs: createOrgRepo(db, deps),
+    memberships: createMembershipRepo(db, deps),
+    roles: createRoleRepo(db),
     audit: createAuditRepo(db, deps),
   };
 }

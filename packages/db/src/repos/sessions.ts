@@ -14,6 +14,7 @@ import type {
   RevokeReason,
   Session,
   SessionId,
+  OrgId,
   SessionRepo,
   UserId,
 } from '@auth/core';
@@ -90,6 +91,14 @@ export function createSessionRepo(db: Database, deps: RepoDeps): SessionRepo {
 
     async touch(id, at, idleExpiresAt) {
       await db.update(sessions).set({ lastSeenAt: at, idleExpiresAt }).where(eq(sessions.id, id));
+    },
+
+    /**
+     * §10.9. ⚑ Changes the active tenant and nothing else — not the session id,
+     * not the refresh chain. Switching org is not a new login.
+     */
+    async setOrg(id: SessionId, orgId: OrgId | null) {
+      await db.update(sessions).set({ orgId }).where(eq(sessions.id, id));
     },
 
     async revoke(id, reason) {

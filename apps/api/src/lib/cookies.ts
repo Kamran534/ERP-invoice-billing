@@ -21,7 +21,14 @@ function base(config: AuthConfig) {
 
 export interface SessionCookies {
   accessToken: string;
-  refreshToken: string;
+  /**
+   * Omitted when only the access token is being replaced — an org switch (§10.9)
+   * mints a new access token and deliberately does *not* rotate the refresh chain,
+   * because the identity has not changed. Overwriting the refresh cookie there
+   * would leave every tab that had not switched holding a spent token, which is
+   * indistinguishable from theft.
+   */
+  refreshToken?: string;
   /** Seconds — mirrors the access token, so the cookie dies with the token. */
   expiresIn: number;
   csrfToken: string;
@@ -46,12 +53,14 @@ export function setSessionCookies(
   // credential, and a cookie scoped to `/` is attached to every API call — so an
   // ordinary request log, a proxy, or a mis-set CORS header on any route becomes
   // an exposure of the one token that can mint new sessions.
-  reply.setCookie(names.refresh, tokens.refreshToken, {
-    ...shared,
-    httpOnly: true,
-    path: refreshPath,
-    maxAge: Math.floor(config.tokens.refresh.idleTtl / 1_000),
-  });
+  if (tokens.refreshToken !== undefined) {
+    reply.setCookie(names.refresh, tokens.refreshToken, {
+      ...shared,
+      httpOnly: true,
+      path: refreshPath,
+      maxAge: Math.floor(config.tokens.refresh.idleTtl / 1_000),
+    });
+  }
 
   // ⚑ Deliberately readable by JavaScript — that is the whole mechanism. The
   // client reads it and echoes it in a header, and an attacker on another origin

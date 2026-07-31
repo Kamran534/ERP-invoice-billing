@@ -12,6 +12,7 @@ import { AuthError } from '../errors.js';
 import { audit, emit, type AuthContext, type RequestContext } from '../context.js';
 import type { Amr, OrgId, Session, SessionId, User, UserId } from '../ports.js';
 import type { CryptoDeps } from './deps.js';
+import { resolveAccess } from './orgs.js';
 
 export interface IssuedSession {
   session: Session;
@@ -57,19 +58,27 @@ export async function issueSession(
   const secret = deps.newSecret('rt');
   await ctx.repos.refreshTokens.issue(session.id, deps.sha256(secret), idleExpiresAt);
 
+  // §10.8 — which tenant, and what they may do in it. A user who belongs to
+  // nothing gets a real session with `org: null`; the client's move is to offer to
+  // create one, not to treat them as unauthenticated.
+  const access_ = await resolveAccess(ctx, input.user.id, session.orgId);
+  if (access_.orgId && access_.orgId !== session.orgId) {
+    await ctx.repos.sessions.setOrg(session.id, access_.orgId);
+  }
+
   const access = await ctx.tokens.mintAccess({
     sub: input.user.id,
     sid: session.id,
-    org: session.orgId,
-    roles: [],
-    perms: [],
+    org: access_.orgId,
+    roles: access_.roles,
+    perms: access_.perms,
     amr: input.amr,
   });
 
   await ctx.repos.users.update(input.user.id, { lastLoginAt: now });
 
   return {
-    session,
+    session: { ...session, orgId: access_.orgId },
     accessToken: access.token,
     refreshToken: secret,
     expiresIn: access.expiresIn,

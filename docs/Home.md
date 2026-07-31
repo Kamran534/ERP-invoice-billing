@@ -41,6 +41,11 @@ device sessions and sign out are **live over HTTP** — real cookies, real CSRF,
 rotation, real TOTP. Password reset, password change and the OTP engine still
 answer `501 NOT_IMPLEMENTED` with a pointer to the spec section that defines them.
 
+Organizations landed too: the first verified user claims the instance and becomes
+its owner ([[ADR-0011 The first verified user claims the instance]]), then invites
+everyone else. Access tokens now carry `org`, `roles` and `perms`, re-resolved on
+every refresh.
+
 Next up is password reset and change ([[AUTH-MODULE-PLAN#18. Delivery phases]]),
 which also brings `/auth/reauth` and with it full step-up enforcement.
 

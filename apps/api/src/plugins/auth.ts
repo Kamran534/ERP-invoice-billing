@@ -64,6 +64,7 @@ export function buildAuthConfig(env: Env): AuthConfig {
       // and the resulting "login does nothing" is unpleasant to diagnose.
       secure: env.HTTPS_ENABLED,
     },
+    orgs: { selfService: env.ORG_SELF_SERVICE },
     password: { checkBreached: env.PASSWORD_BREACH_CHECK },
     mfa: {
       enabled: env.MFA_ENABLED,

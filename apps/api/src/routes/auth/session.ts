@@ -450,13 +450,21 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
 
       const factors = await auth.repos.mfa.listConfirmedFactors(user.id);
 
+      // ⚑ From the token, not from a fresh lookup. `/auth/me` must describe the
+      // credential the caller is actually holding — if a role changed a minute ago
+      // the token still carries the old one until it is refreshed, and saying
+      // otherwise would have clients render permissions the API will refuse.
+      const claims = request.auth!;
+      const membership = claims.org
+        ? await auth.repos.memberships.findActive(user.id, claims.org)
+        : null;
+
       return {
         user: presentUser(user, factors.length > 0),
-        // Orgs, roles and permissions arrive with RBAC (§10). Publishing the
-        // fields as empty now keeps the contract honest and stops clients from
-        // building against a shape that is about to appear.
-        org: null,
-        permissions: [],
+        org: membership
+          ? { id: membership.org.id, name: membership.org.name, role: membership.role.key }
+          : null,
+        permissions: claims.perms ?? [],
         amr: session.amr,
         mfaSatisfiedAt: session.mfaSatisfiedAt?.toISOString() ?? null,
       };

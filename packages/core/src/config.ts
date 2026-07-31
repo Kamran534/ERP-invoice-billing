@@ -139,6 +139,58 @@ export const otpConfigSchema = z.object({
   excludeRoles: z.array(z.string()).default(['owner', 'admin']),
 });
 
+/**
+ * Tenancy (§10.5–§10.7).
+ *
+ * The role permissions here are the auth module's own. A host application
+ * registers `invoice:write` and the rest, and grants them to these roles or to
+ * roles of its own — the module never invents a permission for a domain it knows
+ * nothing about.
+ */
+export const orgConfigSchema = z.object({
+  /**
+   * ⚑ Who may create an organization through the API.
+   *
+   * `first-user` fails closed on a fresh install: the window in which anyone can
+   * claim the instance is exactly one org wide and shuts the moment the first is
+   * created. `anyone` is right for SaaS signup and wrong for an internal
+   * deployment, where it would let any address that can receive mail create a
+   * tenant.
+   */
+  selfService: z.enum(['first-user', 'anyone', 'never']).default('first-user'),
+  ownerRole: z.string().default('owner'),
+  /** Seeded per org at creation, so one tenant's roles can diverge later. */
+  systemRoles: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        name: z.string().min(1),
+        permissions: z.array(z.string().min(1)),
+      }),
+    )
+    .default([
+      // ⚑ `*` includes `org:delete`, which is why it belongs to the owner alone.
+      // An admin who can delete the organization can end the business
+      // relationship, and "admin" is a role you hand to the office manager.
+      { key: 'owner', name: 'Owner', permissions: ['*'] },
+      {
+        key: 'admin',
+        name: 'Administrator',
+        permissions: [
+          'org:read',
+          'org:update',
+          'member:read',
+          'member:invite',
+          'member:update',
+          'member:remove',
+        ],
+      },
+      { key: 'member', name: 'Member', permissions: ['org:read', 'member:read'] },
+    ]),
+  /** Invitation links, per §5.14. */
+  inviteTtl: dur('7d'),
+});
+
 export const lockoutConfigSchema = z.object({
   maxFailures: z.number().int().min(3).max(100).default(10),
   lockFor: dur('15m'),
@@ -222,6 +274,7 @@ export const authConfigSchema = z.object({
     postLoginRedirectAllowlist: z.array(z.string()).default(['/']),
   }),
   tenancy: z.enum(['none', 'orgs']).default('orgs'),
+  orgs: orgConfigSchema.prefault({}),
   loginMethods: z
     .array(z.enum(['password', 'otp', 'magic_link', 'oauth', 'passkey']))
     .default(['password', 'otp']),
@@ -309,6 +362,11 @@ export function auditProductionConfig(config: AuthConfig): string[] {
   }
   if (!config.urls.appOrigin.startsWith('https://')) {
     problems.push('urls.appOrigin is not https — emailed links would be downgradeable');
+  }
+  if (config.tenancy === 'orgs' && config.orgs.selfService === 'anyone') {
+    problems.push(
+      'orgs.selfService is "anyone" — any verified address can create a tenant. Correct for SaaS signup, wrong for an internal deployment (§10.5)',
+    );
   }
   if (config.otp.allowSignup && config.otp.excludeRoles.length === 0) {
     problems.push('otp.allowSignup with no excludeRoles — a mailbox alone could reach a privileged account (§5.11.3)');

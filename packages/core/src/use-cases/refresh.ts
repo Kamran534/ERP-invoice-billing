@@ -11,6 +11,7 @@ import { AuthError, errors } from '../errors.js';
 import { audit, emit, type AuthContext, type RequestContext } from '../context.js';
 import type { AccessClaims, RefreshTokenRow, Session, User } from '../ports.js';
 import type { CryptoDeps } from './deps.js';
+import { resolveAccess } from './orgs.js';
 
 export interface RotateRefreshInput extends RequestContext {
   /** The opaque secret the client presented. Never logged, never stored. */
@@ -130,12 +131,20 @@ export async function rotateRefreshToken(
 
   // ── 17–18: permissions are re-read here, which is why access tokens can be
   // short and dumb: a role change or suspension lands within one token lifetime.
+  // ⚑ Re-resolved on every rotation, not carried over from the previous token.
+  // That is what makes a role change, a removed membership or a new permission
+  // land within one access-token lifetime instead of at the next login (§10.8).
+  const access_ = await resolveAccess(ctx, user.id, session.orgId);
+  if (access_.orgId !== session.orgId) {
+    await ctx.repos.sessions.setOrg(session.id, access_.orgId);
+  }
+
   const claims: AccessClaims = {
     sub: user.id,
     sid: session.id,
-    org: session.orgId,
-    roles: [],
-    perms: [],
+    org: access_.orgId,
+    roles: access_.roles,
+    perms: access_.perms,
     amr: session.amr,
   };
   const access = await ctx.tokens.mintAccess(claims);
@@ -153,7 +162,7 @@ export async function rotateRefreshToken(
     accessToken: access.token,
     refreshToken: secret,
     expiresIn: access.expiresIn,
-    session: { ...session, lastSeenAt: now, idleExpiresAt },
+    session: { ...session, lastSeenAt: now, idleExpiresAt, orgId: access_.orgId },
   };
 }
 

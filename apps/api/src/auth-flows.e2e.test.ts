@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import type { FastifyInstance, InjectOptions } from 'fastify';
+import { sql } from '@auth/db';
 import { createTotpService } from '@auth/crypto';
 import { loadEnv } from './env.js';
 import { buildApp } from './app.js';
@@ -1072,5 +1073,279 @@ describe('two-factor authentication', () => {
       headers: { cookie: cookieHeader(stale) },
     });
     expect(check.statusCode).toBe(401);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('organizations', () => {
+  /** A fresh instance for each test: `first-user` is a once-per-database rule. */
+  async function freshInstance(selfService = 'first-user') {
+    const instance = await buildApp(
+      loadEnv({
+        ...process.env,
+        NODE_ENV: 'test',
+        COOKIE_MODE: 'both',
+        HTTPS_ENABLED: 'false',
+        LOG_LEVEL: 'silent',
+        SWAGGER_ENABLED: 'false',
+        ORG_SELF_SERVICE: selfService,
+        REDIS_KEY_PREFIX: `e2e-org-${Date.now()}-${Math.random()}:`,
+        MAX_EVENT_LOOP_DELAY_MS: '60000',
+        MAX_HEAP_USED_BYTES: String(8 * 1024 ** 3),
+        MAX_RSS_BYTES: String(8 * 1024 ** 3),
+        DB_CONNECT_TIMEOUT_MS: '30000',
+        REDIS_COMMAND_TIMEOUT_MS: '10000',
+        ...(process.env['TEST_DATABASE_URL']
+          ? { DATABASE_URL: process.env['TEST_DATABASE_URL'] }
+          : {}),
+      } as NodeJS.ProcessEnv),
+    );
+    // ⚑ Wipe first. `first-user` asks "does any org exist", and the answer is
+    // whatever previous tests left behind — the rule is about the database, not
+    // about the process.
+    await instance.dbHandle.db.execute(
+      sql`TRUNCATE TABLE auth_orgs, auth_memberships, auth_roles, auth_users CASCADE`,
+    );
+    return instance;
+  }
+
+  /** Registers, verifies and signs in against a specific app instance. */
+  async function onboard(instance: FastifyInstance, email = freshEmail()) {
+    const reg = await instance.inject({
+      method: 'POST',
+      remoteAddress: clientIp,
+      url: '/auth/register',
+      payload: { email, password: PASSWORD },
+    });
+    expect(reg.statusCode, reg.payload).toBe(202);
+
+    const token = (await mailpitFind(email)).Text.match(/token=([^\s&]+)/)?.[1];
+    await instance.inject({
+      method: 'POST',
+      remoteAddress: clientIp,
+      url: '/auth/verify-email',
+      payload: { token },
+    });
+
+    const login = await instance.inject({
+      method: 'POST',
+      remoteAddress: clientIp,
+      url: '/auth/login',
+      payload: { email, password: PASSWORD },
+    });
+    expect(login.statusCode, login.payload).toBe(200);
+    const body = json<{ session: { accessToken: string } }>(login);
+    return { email, bearer: { authorization: `Bearer ${body.session.accessToken}` } };
+  }
+
+  it('⚑ makes the first user the owner of the organization they create', async () => {
+    const instance = await freshInstance();
+    try {
+      const first = await onboard(instance);
+
+      const created = await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: first.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+
+      expect(created.statusCode, created.payload).toBe(201);
+      const body = json<{ org: { id: string; slug: string }; role: string; accessToken: string }>(
+        created,
+      );
+      expect(body.role).toBe('owner');
+      expect(body.org.slug).toBe('acme-billing');
+
+      // The response carries a token that already knows about the new org, so a
+      // client never has to guess when its permissions became real.
+      const me = json<{ org: { name: string; role: string } | null; permissions: string[] }>(
+        await instance.inject({
+          method: 'GET',
+          url: '/auth/me',
+          headers: { authorization: `Bearer ${body.accessToken}` },
+        }),
+      );
+      expect(me.org).toMatchObject({ name: 'Acme Billing', role: 'owner' });
+      expect(me.permissions).toEqual(['*']);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('⚑ shuts the door behind the first user', async () => {
+    const instance = await freshInstance();
+    try {
+      const first = await onboard(instance);
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: first.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+
+      const second = await onboard(instance);
+      const attempt = await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: second.bearer,
+        payload: { name: 'Not Yours' },
+      });
+
+      // Everyone after the first joins by invitation.
+      expect(attempt.statusCode).toBe(403);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('a user with no organization is authenticated, not rejected', async () => {
+    const instance = await freshInstance();
+    try {
+      const user = await onboard(instance);
+
+      const me = json<{ org: null; permissions: string[] }>(
+        await instance.inject({ method: 'GET', url: '/auth/me', headers: user.bearer }),
+      );
+      expect(me.org).toBeNull();
+      expect(me.permissions).toEqual([]);
+
+      // ⚑ Authenticated but tenant-less. Anything org-scoped refuses, and the
+      // client's move is to offer to create one — not to send them back to login.
+      const members = await instance.inject({
+        method: 'GET',
+        url: '/auth/orgs/current/members',
+        headers: user.bearer,
+      });
+      expect(members.statusCode).toBe(403);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('invites a member, who joins with the granted role', async () => {
+    const instance = await freshInstance();
+    try {
+      const ownerUser = await onboard(instance);
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: ownerUser.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+      // The owner's bearer is stale now; take the fresh one.
+      const refreshed = await onboard(instance, ownerUser.email);
+
+      const inviteeEmail = freshEmail();
+      const invited = await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs/current/invites',
+        headers: refreshed.bearer,
+        payload: { email: inviteeEmail, role: 'member' },
+      });
+      expect(invited.statusCode, invited.payload).toBe(202);
+
+      const inviteToken = (await mailpitFind(inviteeEmail)).Text.match(/token=([^\s&]+)/)?.[1];
+      const invitee = await onboard(instance, inviteeEmail);
+
+      const accepted = await instance.inject({
+        method: 'POST',
+        url: '/auth/invites/accept',
+        headers: invitee.bearer,
+        payload: { token: inviteToken },
+      });
+      expect(accepted.statusCode, accepted.payload).toBe(200);
+      expect(json<{ role: string }>(accepted).role).toBe('member');
+
+      const members = json<{ members: Array<{ role: string }> }>(
+        await instance.inject({
+          method: 'GET',
+          url: '/auth/orgs/current/members',
+          headers: refreshed.bearer,
+        }),
+      );
+      expect(members.members).toHaveLength(2);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('⚑ refuses a member the permissions of an admin', async () => {
+    const instance = await freshInstance();
+    try {
+      const ownerUser = await onboard(instance);
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: ownerUser.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+      const owner = await onboard(instance, ownerUser.email);
+
+      const inviteeEmail = freshEmail();
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs/current/invites',
+        headers: owner.bearer,
+        payload: { email: inviteeEmail, role: 'member' },
+      });
+      const inviteToken = (await mailpitFind(inviteeEmail)).Text.match(/token=([^\s&]+)/)?.[1];
+      const invitee = await onboard(instance, inviteeEmail);
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/invites/accept',
+        headers: invitee.bearer,
+        payload: { token: inviteToken },
+      });
+
+      // Fresh token, now carrying `member`.
+      const asMember = await onboard(instance, inviteeEmail);
+      const attempt = await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs/current/invites',
+        headers: asMember.bearer,
+        payload: { email: freshEmail(), role: 'member' },
+      });
+
+      // `member` holds org:read and member:read, and nothing else.
+      expect(attempt.statusCode).toBe(403);
+      expect(json<{ error: { code: string } }>(attempt).error.code).toBe('PERMISSION_DENIED');
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('⚑ refuses to remove the only owner', async () => {
+    const instance = await freshInstance();
+    try {
+      const ownerUser = await onboard(instance);
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/orgs',
+        headers: ownerUser.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+      const owner = await onboard(instance, ownerUser.email);
+
+      const members = json<{ members: Array<{ membershipId: string; role: string }> }>(
+        await instance.inject({
+          method: 'GET',
+          url: '/auth/orgs/current/members',
+          headers: owner.bearer,
+        }),
+      );
+      const ownerMembership = members.members.find((m) => m.role === 'owner')!;
+
+      const attempt = await instance.inject({
+        method: 'DELETE',
+        url: `/auth/orgs/current/members/${ownerMembership.membershipId}`,
+        headers: owner.bearer,
+      });
+
+      // No permission repairs an ownerless org, so this is a refusal.
+      expect(attempt.statusCode).toBe(409);
+    } finally {
+      await instance.close();
+    }
   });
 });

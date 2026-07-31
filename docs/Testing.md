@@ -5,14 +5,14 @@ updated: 2026-07-31
 
 # Testing
 
-**501 tests in three layers**, separated by what they need to run — because a suite
+**541 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
-| `unit` | `*.test.ts` | nothing | ~15 s | 310 |
-| `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~25 s | 96 |
-| `e2e` | `*.e2e.test.ts` | full stack | ~55 s | 95 |
+| `unit` | `*.test.ts` | nothing | ~15 s | 338 |
+| `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~25 s | 102 |
+| `e2e` | `*.e2e.test.ts` | full stack | ~60 s | 101 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
 alias to their **source**, not `dist/`, so tests never need a prior build, coverage
@@ -197,6 +197,14 @@ See [[Decisions]] for the full stories.
 - **`upgrade-insecure-requests` broke the docs UI** for every non-localhost
   visitor. Now covered by four tests, including one that checks the docs CSP
   separately from the API CSP — see [[Security headers]].
+- **⚑ Two people could both claim a fresh instance.** `orgs.selfService:
+  'first-user'` counted the organizations inside the creating transaction, which
+  reads like enough and is not: under READ COMMITTED a plain `count(*)` takes no
+  lock, so both transactions saw zero and both inserted. The default would have
+  been silently useless in exactly the situation it exists for. Caught by an
+  integration test that fires two claims with `Promise.all`; fixed with a
+  `pg_advisory_xact_lock` on that path — see
+  [[ADR-0011 The first verified user claims the instance]].
 - **⚑ Every auth cookie was silently discarded by browsers.** `__Host-at` went out
   without `Secure` over plain HTTP, and `__Host-rt` with `Path=/auth/token` — both
   violate the prefix rules, and a browser's response to that is to drop the cookie

@@ -561,3 +561,102 @@ describe('audit', () => {
     expect(await repos.audit.purgeLoginAttempts(futureDate(1_000))).toBe(1);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────
+describe('organizations', () => {
+  const ROLES = [
+    { key: 'owner', name: 'Owner', permissions: ['*'] },
+    { key: 'admin', name: 'Administrator', permissions: ['member:read', 'member:invite'] },
+    { key: 'member', name: 'Member', permissions: ['org:read'] },
+  ];
+
+  const claim = async (userId: string, slug: string, onlyIfFirst: boolean) =>
+    repos.orgs.createWithOwner({
+      name: slug,
+      slug,
+      ownerId: userId,
+      roles: ROLES,
+      ownerRoleKey: 'owner',
+      onlyIfFirst,
+    });
+
+  it('creates the org, its roles and the owner membership together', async () => {
+    const user = await insertUser(handle.db);
+    const result = await claim(user.id, 'acme', true);
+    expect('org' in result).toBe(true);
+    if (!('org' in result)) return;
+
+    expect(await repos.roles.listForOrg(result.org.id)).toHaveLength(3);
+    expect(await repos.roles.permissionsFor((await repos.roles.findByKey(result.org.id, 'owner'))!.id)).toEqual(['*']);
+
+    const memberships = await repos.memberships.listActiveForUser(user.id);
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]!.role.key).toBe('owner');
+  });
+
+  it('⚑ lets exactly one of two racing claims win a fresh instance', async () => {
+    const [a, b] = await Promise.all([insertUser(handle.db), insertUser(handle.db)]);
+
+    // The whole point of counting inside the transaction. Counting outside and
+    // then inserting gives both callers zero, and the instance ends up with two
+    // owners of two different organizations.
+    const results = await Promise.all([claim(a.id, 'first', true), claim(b.id, 'second', true)]);
+
+    expect(results.filter((r) => 'org' in r)).toHaveLength(1);
+    expect(results.filter((r) => 'conflict' in r && r.conflict === 'not_first')).toHaveLength(1);
+    expect(await repos.orgs.count()).toBe(1);
+  });
+
+  it('refuses a duplicate slug', async () => {
+    const [a, b] = await Promise.all([insertUser(handle.db), insertUser(handle.db)]);
+    await claim(a.id, 'acme', false);
+
+    const second = await claim(b.id, 'acme', false);
+    expect(second).toEqual({ conflict: 'slug_taken' });
+  });
+
+  it('⚑ leaves nothing behind when the owner does not exist', async () => {
+    const before = await repos.orgs.count();
+    await expect(
+      claim('019fb000-0000-7000-8000-000000000000', 'ghost', false),
+    ).rejects.toThrow();
+
+    // A foreign-key failure on the membership must take the org and its roles with
+    // it — an org with no owner cannot be repaired through the API.
+    expect(await repos.orgs.count()).toBe(before);
+    expect(await repos.orgs.findBySlug('ghost')).toBeNull();
+  });
+
+  it('counts only active owners, so a suspended one cannot rescue an org', async () => {
+    const [a, b] = await Promise.all([insertUser(handle.db), insertUser(handle.db)]);
+    const result = await claim(a.id, 'acme', false);
+    if (!('org' in result)) throw new Error('expected an org');
+
+    const ownerRole = await repos.roles.findByKey(result.org.id, 'owner');
+    await repos.memberships.create({
+      orgId: result.org.id,
+      userId: b.id,
+      roleId: ownerRole!.id,
+      status: 'suspended',
+    });
+
+    expect(await repos.memberships.countActiveWithRole(result.org.id, 'owner')).toBe(1);
+  });
+
+  it('hides pending invitations from the active list but not from the member list', async () => {
+    const [a, b] = await Promise.all([insertUser(handle.db), insertUser(handle.db)]);
+    const result = await claim(a.id, 'acme', false);
+    if (!('org' in result)) throw new Error('expected an org');
+
+    const memberRole = await repos.roles.findByKey(result.org.id, 'member');
+    await repos.memberships.create({
+      orgId: result.org.id,
+      userId: b.id,
+      roleId: memberRole!.id,
+      status: 'invited',
+    });
+
+    expect(await repos.memberships.listActiveForUser(b.id)).toHaveLength(0);
+    expect(await repos.memberships.listForOrg(result.org.id)).toHaveLength(2);
+  });
+});

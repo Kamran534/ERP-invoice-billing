@@ -108,6 +108,8 @@ when policy requires a factor the user has not enrolled (§5.4.6).
 | `POST /auth/mfa/verify` | Live for `totp` and `recovery`; `email_otp` / `sms_otp` return `501` (§5.11) |
 | `GET /auth/mfa`, `POST /auth/mfa/totp/setup` and `/confirm`, `DELETE /auth/mfa/factors/{id}`, `POST /auth/mfa/recovery-codes` | Live |
 | `GET` and `DELETE /auth/trusted-devices` | Live |
+| `POST` and `GET /auth/orgs`, `POST /auth/token/switch-org` | Live |
+| `/auth/orgs/current/members`, `/auth/orgs/current/invites`, `/auth/invites/accept` | Live |
 | `GET /auth/me`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}` | Live |
 | Password reset / change (§5.7, §5.8) | `501` |
 | OTP engine (§5.11) | `501` |
@@ -120,7 +122,7 @@ have a factor is held to it, and a trusted device never satisfies it.
 
 ## Tests
 
-493 across three layers — see [[Testing]] for the split and the reasons for it.
+541 across three layers — see [[Testing]] for the split and the reasons for it.
 Coverage floors live in `vitest.config.ts` rather than in prose.
 
 ## Not built yet
@@ -132,8 +134,11 @@ Coverage floors live in `vitest.config.ts` rather than in prose.
   returns `501` from an otherwise-live `/auth/mfa/verify`.
 - WebAuthn factors (§5.13). The type exists in the schema and in the enum; nothing
   registers or verifies one.
-- RBAC, orgs and permissions (§10). `mfa.enforce: 'admins'` currently falls back to
-  a per-user marker for want of a role table.
+- Row-level policies (§10.1). Permissions are checked; a *policy* hook for "only the
+  invoice owner or an admin" is not built. `mfa.enforce: 'admins'` still falls back
+  to the per-user marker rather than reading the role.
+- `SET LOCAL app.current_org` + RLS for defence in depth (§10.3). Tenant scoping is
+  enforced in the use-cases today, not by the database.
 - OAuth/SSO (§5.10), passkeys (§5.13), API keys (§4.6), impersonation.
 - ⚑ **Multi-replica.** Signing keys are generated in memory per process, so a token
   minted by one replica will not verify on another. `auth_signing_keys` exists and

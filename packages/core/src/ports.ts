@@ -134,6 +134,8 @@ export interface SessionRepo {
   findById(id: SessionId): Promise<Session | null>;
   listActive(userId: UserId): Promise<Session[]>;
   touch(id: SessionId, at: Date, idleExpiresAt: Date): Promise<void>;
+  /** Org switch (§10.9). ⚑ Changes the active tenant, never the session identity. */
+  setOrg(id: SessionId, orgId: OrgId | null): Promise<void>;
   revoke(id: SessionId, reason: RevokeReason): Promise<void>;
   revokeAllForUser(userId: UserId, reason: RevokeReason, except?: SessionId): Promise<number>;
 }
@@ -159,6 +161,95 @@ export interface RefreshTokenRepo {
   /** Kills the whole family — the point of rotation (§5.5.4). */
   revokeChain(sessionId: SessionId, reason: RevokeReason): Promise<number>;
   findBySessionAndSuccessor(tokenId: string): Promise<RefreshTokenRow | null>;
+}
+
+// ── Tenancy (§10.5–§10.9) ──────────────────────────────────────────────────
+
+export type MembershipStatus = 'invited' | 'active' | 'suspended';
+
+export interface Org {
+  id: OrgId;
+  name: string;
+  slug: string;
+  status: 'active' | 'suspended';
+  createdAt: Date;
+}
+
+export interface Role {
+  id: string;
+  /** null = a system-wide role shared by every org. */
+  orgId: OrgId | null;
+  key: string;
+  name: string;
+  isSystem: boolean;
+}
+
+export interface Membership {
+  id: string;
+  orgId: OrgId;
+  userId: UserId;
+  roleId: string;
+  status: MembershipStatus;
+  joinedAt: Date | null;
+}
+
+/** A membership joined to the org and role it points at — what a UI actually renders. */
+export interface MembershipView {
+  membershipId: string;
+  org: Org;
+  role: Role;
+  status: MembershipStatus;
+  joinedAt: Date | null;
+}
+
+export interface OrgRepo {
+  /**
+   * ⚑ Creates the org, its system roles and the owner's membership in **one
+   * transaction**, and refuses when `onlyIfFirst` is set and any org already
+   * exists (§10.5).
+   *
+   * All of it together, because an org with no owner is unreachable through the
+   * API — nobody holds the permission to invite the first member — and the
+   * first-org check is only meaningful if the count and the insert cannot be
+   * separated by another transaction.
+   */
+  createWithOwner(input: {
+    name: string;
+    slug: string;
+    ownerId: UserId;
+    roles: Array<{ key: string; name: string; permissions: string[] }>;
+    ownerRoleKey: string;
+    onlyIfFirst: boolean;
+  }): Promise<{ org: Org; membership: Membership } | { conflict: 'not_first' | 'slug_taken' }>;
+
+  findById(id: OrgId): Promise<Org | null>;
+  findBySlug(slug: string): Promise<Org | null>;
+  count(): Promise<number>;
+}
+
+export interface MembershipRepo {
+  /** Active memberships only — an invitation is not a tenancy. */
+  listActiveForUser(userId: UserId): Promise<MembershipView[]>;
+  findActive(userId: UserId, orgId: OrgId): Promise<MembershipView | null>;
+  listForOrg(orgId: OrgId): Promise<Array<MembershipView & { userId: UserId; email: string | null }>>;
+  create(input: {
+    orgId: OrgId;
+    userId: UserId;
+    roleId: string;
+    status: MembershipStatus;
+    invitedBy?: UserId | null;
+  }): Promise<Membership>;
+  activate(id: string, at: Date): Promise<void>;
+  updateRole(id: string, roleId: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  /** ⚑ Guards the last-owner rule (§10.7). Counts *active* holders only. */
+  countActiveWithRole(orgId: OrgId, roleKey: string): Promise<number>;
+}
+
+export interface RoleRepo {
+  findByKey(orgId: OrgId, key: string): Promise<Role | null>;
+  listForOrg(orgId: OrgId): Promise<Role[]>;
+  permissionsFor(roleId: string): Promise<string[]>;
 }
 
 // ── Second factors ──────────────────────────────────────────────────────────

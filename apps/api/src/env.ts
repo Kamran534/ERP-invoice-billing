@@ -95,6 +95,18 @@ export const envSchema = z.object({
    */
   COOKIE_MODE: z.enum(['cookie', 'bearer', 'both']).default('cookie'),
 
+  /**
+   * Who may create an organization (plan §10.5).
+   *
+   *  - `first-user` — only while none exists. The first verified account claims
+   *    the instance and becomes its owner; everyone else joins by invitation.
+   *  - `anyone`     — SaaS signup: any verified user without one may create one.
+   *  - `never`      — provisioned out of band.
+   *
+   * ⚑ `first-user` is the default because it fails closed on a fresh install.
+   */
+  ORG_SELF_SERVICE: z.enum(['first-user', 'anyone', 'never']).default('first-user'),
+
   MFA_ENABLED: bool.default(true),
   /** 'admins' falls back to the per-user marker until RBAC lands (plan §10). */
   MFA_ENFORCE: z.enum(['optional', 'admins', 'all']).default('admins'),

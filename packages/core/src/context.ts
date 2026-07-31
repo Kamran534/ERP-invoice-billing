@@ -17,12 +17,15 @@ import type {
   EventBus,
   Logger,
   Mailer,
+  MembershipRepo,
   MfaRepo,
   OneTimeTokenRepo,
+  OrgRepo,
   OtpChallengeRepo,
   PasswordHasher,
   RandomSource,
   RefreshTokenRepo,
+  RoleRepo,
   SecretBox,
   SessionRepo,
   SmsSender,
@@ -40,6 +43,9 @@ export interface AuthRepos {
   otpChallenges: OtpChallengeRepo;
   mfa: MfaRepo;
   trustedDevices: TrustedDeviceRepo;
+  orgs: OrgRepo;
+  memberships: MembershipRepo;
+  roles: RoleRepo;
   audit: AuditRepo;
 }
 

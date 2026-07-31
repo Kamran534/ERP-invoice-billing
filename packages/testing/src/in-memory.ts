@@ -20,8 +20,13 @@ import type {
   EventBus,
   Logger,
   Mailer,
+  Membership,
+  MembershipRepo,
+  MembershipView,
   MfaFactor,
   MfaRepo,
+  Org,
+  OrgRepo,
   OneTimeTokenPurpose,
   OneTimeTokenRepo,
   OtpChallenge,
@@ -32,6 +37,8 @@ import type {
   RefreshTokenRepo,
   RefreshTokenRow,
   RenderedMail,
+  Role,
+  RoleRepo,
   RevokeReason,
   Session,
   SessionRepo,
@@ -195,6 +202,11 @@ export function createInMemorySessionRepo(clock: Clock = realClock): SessionRepo
     async touch(id, at, idleExpiresAt) {
       const session = byId.get(id);
       if (session) byId.set(id, { ...session, lastSeenAt: at, idleExpiresAt });
+    },
+
+    async setOrg(id, orgId) {
+      const session = byId.get(id);
+      if (session) byId.set(id, { ...session, orgId });
     },
 
     async revoke(id, reason) {
@@ -568,6 +580,165 @@ export function createInMemoryTrustedDeviceRepo(clock: Clock = realClock): Trust
   };
 }
 
+/**
+ * Organizations, memberships and roles.
+ *
+ * ⚑ `createWithOwner` is all-or-nothing here too. The doubles exist to let a
+ * use-case test drive real decisions, and "what happens when the membership
+ * insert fails" is a decision — a double that leaves a half-built org would let a
+ * test pass on behaviour Postgres would never produce.
+ */
+export function createInMemoryOrgRepos(clock: Clock = realClock): {
+  orgs: OrgRepo;
+  memberships: MembershipRepo;
+  roles: RoleRepo;
+} {
+  const orgRows = new Map<string, Org>();
+  const roleRows = new Map<string, Role>();
+  const rolePerms = new Map<string, string[]>();
+  const membershipRows = new Map<string, Membership>();
+  const emails = new Map<string, string | null>();
+  let seq = 0;
+
+  const viewOf = (m: Membership): MembershipView | null => {
+    const org = orgRows.get(m.orgId);
+    const role = roleRows.get(m.roleId);
+    if (!org || !role) return null;
+    return { membershipId: m.id, org, role, status: m.status, joinedAt: m.joinedAt };
+  };
+
+  return {
+    orgs: {
+      async createWithOwner(input) {
+        if (input.onlyIfFirst && orgRows.size > 0) return { conflict: 'not_first' };
+        if ([...orgRows.values()].some((o) => o.slug === input.slug)) {
+          return { conflict: 'slug_taken' };
+        }
+
+        const org: Org = {
+          id: `org-${(seq += 1)}`,
+          name: input.name,
+          slug: input.slug,
+          status: 'active',
+          createdAt: clock.now(),
+        };
+        orgRows.set(org.id, org);
+
+        const byKey = new Map<string, string>();
+        for (const role of input.roles) {
+          const row: Role = {
+            id: `role-${(seq += 1)}`,
+            orgId: org.id,
+            key: role.key,
+            name: role.name,
+            isSystem: true,
+          };
+          roleRows.set(row.id, row);
+          rolePerms.set(row.id, [...role.permissions]);
+          byKey.set(role.key, row.id);
+        }
+
+        const ownerRoleId = byKey.get(input.ownerRoleKey);
+        if (!ownerRoleId) throw new Error(`owner role "${input.ownerRoleKey}" not seeded`);
+
+        const membership: Membership = {
+          id: `membership-${(seq += 1)}`,
+          orgId: org.id,
+          userId: input.ownerId,
+          roleId: ownerRoleId,
+          status: 'active',
+          joinedAt: clock.now(),
+        };
+        membershipRows.set(membership.id, membership);
+        return { org, membership };
+      },
+
+      async findById(id) {
+        return orgRows.get(id) ?? null;
+      },
+      async findBySlug(slug) {
+        return [...orgRows.values()].find((o) => o.slug === slug) ?? null;
+      },
+      async count() {
+        return orgRows.size;
+      },
+    },
+
+    memberships: {
+      async listActiveForUser(userId) {
+        return [...membershipRows.values()]
+          .filter((m) => m.userId === userId && m.status === 'active')
+          .sort((a, b) => (a.joinedAt?.getTime() ?? 0) - (b.joinedAt?.getTime() ?? 0))
+          .map(viewOf)
+          .filter((v): v is MembershipView => v !== null);
+      },
+
+      async findActive(userId, orgId) {
+        const row = [...membershipRows.values()].find(
+          (m) => m.userId === userId && m.orgId === orgId && m.status === 'active',
+        );
+        return row ? viewOf(row) : null;
+      },
+
+      async listForOrg(orgId) {
+        return [...membershipRows.values()]
+          .filter((m) => m.orgId === orgId)
+          .map((m) => {
+            const view = viewOf(m);
+            return view ? { ...view, userId: m.userId, email: emails.get(m.userId) ?? null } : null;
+          })
+          .filter((v): v is MembershipView & { userId: UserId; email: string | null } => v !== null);
+      },
+
+      async create(input) {
+        const membership: Membership = {
+          id: `membership-${(seq += 1)}`,
+          orgId: input.orgId,
+          userId: input.userId,
+          roleId: input.roleId,
+          status: input.status,
+          joinedAt: input.status === 'active' ? clock.now() : null,
+        };
+        membershipRows.set(membership.id, membership);
+        return membership;
+      },
+
+      async activate(id, at) {
+        const row = membershipRows.get(id);
+        if (row) membershipRows.set(id, { ...row, status: 'active', joinedAt: at });
+      },
+
+      async updateRole(id, roleId) {
+        const row = membershipRows.get(id);
+        if (row) membershipRows.set(id, { ...row, roleId });
+      },
+
+      async remove(id) {
+        membershipRows.delete(id);
+      },
+
+      async countActiveWithRole(orgId, roleKey) {
+        return [...membershipRows.values()].filter(
+          (m) =>
+            m.orgId === orgId && m.status === 'active' && roleRows.get(m.roleId)?.key === roleKey,
+        ).length;
+      },
+    },
+
+    roles: {
+      async findByKey(orgId, key) {
+        return [...roleRows.values()].find((r) => r.orgId === orgId && r.key === key) ?? null;
+      },
+      async listForOrg(orgId) {
+        return [...roleRows.values()].filter((r) => r.orgId === orgId);
+      },
+      async permissionsFor(roleId) {
+        return rolePerms.get(roleId) ?? [];
+      },
+    },
+  };
+}
+
 /** Records every event so a test can assert what was written, and in what order. */
 export function createRecordingAuditRepo(): AuditRepo & {
   events: AuditEvent[];
@@ -766,6 +937,9 @@ export interface InMemoryRepos {
   otpChallenges: OtpChallengeRepo;
   mfa: MfaRepo;
   trustedDevices: TrustedDeviceRepo;
+  orgs: OrgRepo;
+  memberships: MembershipRepo;
+  roles: RoleRepo;
   audit: ReturnType<typeof createRecordingAuditRepo>;
 }
 
@@ -778,6 +952,7 @@ export function createInMemoryRepos(clock: Clock = realClock): InMemoryRepos {
     otpChallenges: createInMemoryOtpChallengeRepo(clock),
     mfa: createInMemoryMfaRepo(clock),
     trustedDevices: createInMemoryTrustedDeviceRepo(clock),
+    ...createInMemoryOrgRepos(clock),
     audit: createRecordingAuditRepo(),
   };
 }

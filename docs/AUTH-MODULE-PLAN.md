@@ -1254,6 +1254,102 @@ cross-tenant reads/writes and must get 403/404 on all of them.
 `403` = authenticated but not allowed (client must not retry). `403 REAUTH_REQUIRED` is the one
 403 the client *should* act on, by prompting for step-up.
 
+### 10.5 Where an organization comes from
+
+⚑ Every account arrives with no organization. That is not an oversight to paper over with an
+auto-created "personal workspace": a tenant is a billing boundary and a data boundary, and creating
+one implicitly means nobody ever decided who owns it.
+
+`orgs.selfService` decides who may create one:
+
+| Value | Who can create | For |
+|---|---|---|
+| `first-user` *(default)* | Only while **no organization exists at all** | Single-tenant install. The first person to finish verification claims the instance |
+| `anyone` | Any verified user who is not already a member of one | Multi-tenant SaaS signup |
+| `never` | Nobody through the API | Orgs provisioned out of band by an operator |
+
+⚑ `first-user` is the default because it fails *closed* on a fresh install: the window in which
+anyone can claim the instance is exactly one org wide, and it shuts the moment the first is created.
+`anyone` is correct for SaaS and wrong for an internal deployment, where it would let any address
+that can receive mail create a tenant.
+
+⚑ The check is `count(orgs) = 0` evaluated inside the creating transaction, not a "is this the first
+user" flag on the user row. Two people racing to claim a fresh instance must produce one owner and
+one `403`, and only the database can decide that.
+
+#### 10.5.1 What creating one does
+
+In a single transaction:
+
+1. Insert the org, with a slug derived from the name and made unique.
+2. Seed the three system roles for it (§10.6).
+3. Insert a membership for the creator with the `owner` role, `status: 'active'`.
+4. Set the session's active org, so the next token carries it.
+
+Audited as `org.created` and `member.joined`. ⚑ All four steps or none: an org with no owner is
+unreachable through the API — nobody holds the permission to invite the first member — and would
+have to be repaired by hand in SQL.
+
+### 10.6 System roles
+
+Three roles are seeded **per organization** rather than shared, so a deployment can later add
+permissions to one tenant's `admin` without touching another's. `is_system` marks them so they
+cannot be deleted or renamed through the API.
+
+| Key | Permissions | Notes |
+|---|---|---|
+| `owner` | `*` | ⚑ Exactly one org can never be left without an owner — see §10.7 |
+| `admin` | `org:read`, `org:update`, `member:read`, `member:invite`, `member:update`, `member:remove` | Everything about running the tenant, nothing about ending it |
+| `member` | `org:read`, `member:read` | |
+
+⚑ `org:delete` belongs to `owner` alone, via `*`. An admin who can delete the organization is an
+admin who can end the business relationship, and "admin" is a role you hand out to the office
+manager.
+
+The permission strings above are the **auth module's own**. A host application registers its own
+(`invoice:write`, `payment:refund`) and grants them to these roles or to roles of its own; the
+module never invents a permission for a domain it knows nothing about.
+
+### 10.7 Rules that keep an organization usable
+
+- ⚑ **The last owner cannot be removed or demoted.** `409 CONFLICT`. Not a warning, not a
+  soft-delete — an org with no owner cannot grant anyone the permission to fix it.
+- ⚑ **You cannot remove or demote yourself out of `owner`** while you are the only one. Same rule,
+  stated from the direction people actually hit it.
+- **Roles are granted, never escalated.** An inviter may only grant a role whose permissions are a
+  subset of their own, evaluated at *acceptance* time as well as at invite time (§5.14). An admin
+  cannot invite an owner.
+- **A membership is `invited` until accepted.** Only `active` memberships resolve into a token.
+
+### 10.8 How the token learns about the org
+
+`resolveAccess(userId, orgId)` runs at login, at refresh, and at org switch, and returns
+`{ org, roles, perms }` for the access token.
+
+⚑ It runs on **every refresh**, not once at login. That is what makes a permission change take
+effect within one access-token lifetime instead of at the user's next login, and it is the reason
+access tokens can be short and dumb.
+
+Resolution:
+
+1. No membership anywhere → `org: null`, `roles: []`, `perms: []`. The user is authenticated and
+   belongs to nothing; the API tells them so and the client offers to create one.
+2. `session.org_id` set and still an `active` membership → that org.
+3. `session.org_id` set but the membership is gone → ⚑ fall back to another active membership, or
+   to none. A revoked membership must not leave a session carrying a dead tenant.
+4. No `session.org_id` → the oldest active membership, so a returning user lands somewhere
+   predictable.
+
+### 10.9 Switching organization
+
+`POST /auth/token/switch-org { orgId }` verifies an `active` membership, updates `session.org_id`,
+and mints a new access token.
+
+⚑ No new refresh token, and no new session. The identity did not change — the same human, the same
+device, the same login. Rotating the refresh chain here would mean every tab that had not switched
+suddenly holds a spent token, which is indistinguishable from theft (§5.5.4).
+
+
 ---
 
 ## 11. HTTP API surface

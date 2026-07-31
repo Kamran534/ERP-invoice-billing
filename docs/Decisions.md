@@ -23,6 +23,7 @@ New one: `templates/ADR` (Templates → Insert template).
 | [[ADR-0008 Gate HTTPS-only headers behind one flag\|0008]] | One `HTTPS_ENABLED` drives HSTS, CSP upgrade, COOP, cookie `Secure` | Accepted |
 | [[ADR-0009 Decide refresh-token theft on recency, not on read ordering\|0009]] | The repo reports `usedAt`; core forgives a claim from the last 2 s | Accepted |
 | [[ADR-0010 Skip CSRF when a request carries no session cookie\|0010]] | No cookie means nothing to forge, so logout always works | Accepted |
+| [[ADR-0011 The first verified user claims the instance\|0011]] | `orgs.selfService: 'first-user'` — one org wide, then shut | Accepted |
 
 ## Still open
 

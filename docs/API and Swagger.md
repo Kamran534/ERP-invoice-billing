@@ -6,7 +6,7 @@ updated: 2026-07-31
 # API and Swagger
 
 Swagger UI at `/docs`, the document at `/docs/json` and `/docs/yaml`, a service
-index at `/`. **28 documented paths**, OpenAPI 3.1.
+index at `/`. **34 documented paths**, OpenAPI 3.1.
 
 ## One schema, three jobs
 
