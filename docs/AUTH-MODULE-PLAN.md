@@ -1106,7 +1106,24 @@ for refresh, and alert.
 
 ### 8.3 Cookies & CSRF (cookie mode)
 `httpOnly; Secure; SameSite=Lax; Path=/`, `__Host-` prefix when no subdomain sharing is needed.
-Refresh cookie scoped to `Path=/auth/token`. ⚑ CSRF: double-submit token (random value in a
+Refresh cookie scoped to `Path=/auth/token`.
+
+⚑ Those two sentences contradict each other, and the module shipped the contradiction. `__Host-`
+requires `Secure` **and** `Path=/` **and** no `Domain`; a cookie that claims the prefix without
+backing it is **rejected outright by the browser**, silently. `__Host-rt` at `Path=/auth/token` was
+never stored by anything, and neither was `__Host-at` over plain HTTP, where `Secure` is omitted.
+Login returned `200`, set two cookies, kept none, and the next request was an anonymous `401`.
+
+The prefix is therefore **derived**, never configured (`applyCookiePrefixes` in `config.ts`):
+
+| Cookie | Path | Prefix |
+|---|---|---|
+| access, trusted device | `/` | `__Host-` when secure with no domain; `__Secure-` when a domain is set; bare over plain HTTP |
+| refresh | `/auth/token` | `__Secure-` when secure, bare otherwise — never `__Host-` |
+| csrf | `/` | never prefixed; it is readable by design and a prefix would imply hardening it lacks |
+
+Path scoping wins over `__Host-` for the refresh cookie: keeping the long-lived credential off every
+ordinary API call matters more day to day than the subdomain-shadowing protection `__Host-` adds. ⚑ CSRF: double-submit token (random value in a
 readable cookie + `X-CSRF-Token` header) verified on every state-changing route, plus `Origin`
 header validation against the allowlist. `SameSite=Lax` alone is not sufficient defense.
 

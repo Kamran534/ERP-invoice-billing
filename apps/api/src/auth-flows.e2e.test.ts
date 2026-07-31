@@ -34,6 +34,12 @@ beforeAll(async () => {
     loadEnv({
       ...process.env,
       NODE_ENV: 'test',
+      // ⚑ Pinned, not inherited. `vitest.config.ts` loads `.env` into process.env
+      // and this object spreads it, so a developer setting COOKIE_MODE=both to make
+      // Swagger convenient silently changed what these tests assert. Anything the
+      // suite makes claims about has to be stated here.
+      COOKIE_MODE: 'cookie',
+      HTTPS_ENABLED: 'false',
       // ⚑ The throwaway database, when one is configured. e2e does not truncate,
       // but it does create accounts on every run, and they have no business
       // accumulating in the database someone is developing against.
@@ -100,6 +106,14 @@ beforeEach(() => {
 
 const call = (options: InjectOptions) => app.inject({ remoteAddress: clientIp, ...options });
 
+/**
+ * ⚑ Read from config, never hardcoded. The names change with `cookies.secure` —
+ * `__Host-` is only legal alongside `Secure`, so over plain HTTP the prefix is
+ * dropped. Hardcoding `__Host-at` made these tests assert a name the browser would
+ * have rejected, which is how the bug survived 93 of them.
+ */
+const NAMES = () => app.auth.config.cookies.names;
+
 interface Jar {
   [name: string]: string;
 }
@@ -131,7 +145,7 @@ const cookieHeader = (jar: Jar): string =>
 function authHeaders(jar: Jar): Record<string, string> {
   return {
     cookie: cookieHeader(jar),
-    ...(jar['csrf'] ? { 'x-csrf-token': jar['csrf'] } : {}),
+    ...(jar[NAMES().csrf] ? { 'x-csrf-token': jar[NAMES().csrf]! } : {}),
   };
 }
 
@@ -298,7 +312,9 @@ describe('logging in', () => {
     expect(body.session['refreshToken']).toBeUndefined();
 
     const jar = absorb({}, response);
-    expect(Object.keys(jar).sort()).toEqual(['__Host-at', '__Host-rt', 'csrf']);
+    expect(Object.keys(jar).sort()).toEqual(
+      [NAMES().access, NAMES().refresh, NAMES().csrf].sort(),
+    );
   });
 
   it('⚑ scopes the refresh cookie to the refresh endpoint only', async () => {
@@ -310,13 +326,39 @@ describe('logging in', () => {
     });
 
     const lines = ([] as string[]).concat(response.headers['set-cookie'] as string[]);
-    const refresh = lines.find((line) => line.startsWith('__Host-rt='));
-    const access = lines.find((line) => line.startsWith('__Host-at='));
+    const refresh = lines.find((line) => line.startsWith(`${NAMES().refresh}=`));
+    const access = lines.find((line) => line.startsWith(`${NAMES().access}=`));
 
     // The long-lived credential must not ride along on every ordinary API call.
     expect(refresh).toContain('Path=/auth/token');
     expect(refresh).toContain('HttpOnly');
     expect(access).toContain('Path=/');
+  });
+
+  it('⚑ never claims a cookie prefix its attributes cannot back', async () => {
+    const email = await signUpAndVerify();
+    const response = await call({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email, password: PASSWORD },
+    });
+
+    // The rule browsers enforce, restated here because breaking it is silent:
+    // a cookie whose name claims more than its attributes deliver is *discarded*,
+    // so login succeeds, sets nothing, and the next call is anonymous.
+    for (const line of ([] as string[]).concat(response.headers['set-cookie'] as string[])) {
+      const name = line.slice(0, line.indexOf('='));
+      const attributes = line.toLowerCase();
+
+      if (name.startsWith('__Host-')) {
+        expect(attributes, `${name} lacks Secure`).toContain('secure');
+        expect(attributes, `${name} is not Path=/`).toMatch(/path=\/(;|$)/);
+        expect(attributes, `${name} sets a Domain`).not.toContain('domain=');
+      }
+      if (name.startsWith('__Secure-')) {
+        expect(attributes, `${name} lacks Secure`).toContain('secure');
+      }
+    }
   });
 
   it('leaves the CSRF cookie readable, because that is the mechanism', async () => {
@@ -410,7 +452,7 @@ describe('the authenticated surface', () => {
     const garbage = await call({
       method: 'GET',
       url: '/auth/me',
-      headers: { cookie: '__Host-at=not.a.token' },
+      headers: { cookie: `${NAMES().access}=not.a.token` },
     });
     const missing = await call({ method: 'GET', url: '/auth/me' });
 
@@ -521,8 +563,8 @@ describe('refresh', () => {
     expect(response.statusCode, response.payload).toBe(200);
     const after = absorb({ ...jar }, response);
     // ⚑ A new refresh token every time. Reusing it would make theft undetectable.
-    expect(after['__Host-rt']).not.toBe(before['__Host-rt']);
-    expect(after['__Host-at']).not.toBe(before['__Host-at']);
+    expect(after[NAMES().refresh]).not.toBe(before[NAMES().refresh]);
+    expect(after[NAMES().access]).not.toBe(before[NAMES().access]);
     // Cookie mode returns no tokens in the body.
     expect(response.payload).not.toContain('refreshToken');
   });
@@ -550,7 +592,7 @@ describe('refresh', () => {
   it('⚑ a replayed refresh token kills the session and clears the cookies', async () => {
     const email = await signUpAndVerify();
     const jar = await signIn(email);
-    const stolen = jar['__Host-rt']!;
+    const stolen = jar[NAMES().refresh]!;
 
     await call({
       method: 'POST',
@@ -567,8 +609,8 @@ describe('refresh', () => {
       method: 'POST',
       url: '/auth/token/refresh',
       headers: {
-        cookie: `__Host-rt=${stolen}; csrf=${jar['csrf']}`,
-        'x-csrf-token': jar['csrf']!,
+        cookie: `${NAMES().refresh}=${stolen}; ${NAMES().csrf}=${jar[NAMES().csrf]}`,
+        'x-csrf-token': jar[NAMES().csrf]!,
       },
       payload: {},
     });
@@ -578,13 +620,13 @@ describe('refresh', () => {
     expect(replay.payload).not.toMatch(/reuse|theft|detect/i);
 
     const cleared = absorb({ ...jar }, replay);
-    expect(cleared['__Host-rt']).toBeUndefined();
+    expect(cleared[NAMES().refresh]).toBeUndefined();
   }, 15_000);
 
   it('⚑ keeps the cookies on a 409, because the client is about to retry', async () => {
     const email = await signUpAndVerify();
     const jar = await signIn(email);
-    const first = jar['__Host-rt']!;
+    const first = jar[NAMES().refresh]!;
 
     await call({
       method: 'POST',
@@ -598,8 +640,8 @@ describe('refresh', () => {
       method: 'POST',
       url: '/auth/token/refresh',
       headers: {
-        cookie: `__Host-rt=${first}; csrf=${jar['csrf']}`,
-        'x-csrf-token': jar['csrf']!,
+        cookie: `${NAMES().refresh}=${first}; ${NAMES().csrf}=${jar[NAMES().csrf]}`,
+        'x-csrf-token': jar[NAMES().csrf]!,
       },
       payload: {},
     });
@@ -633,11 +675,11 @@ describe('logging out', () => {
     expect(response.statusCode).toBe(204);
 
     const after = absorb({ ...jar }, response);
-    // ⚑ All three, at the paths they were set with. Clearing `__Host-rt` at `/`
+    // ⚑ All three, at the paths they were set with. Clearing the refresh cookie at `/`
     // would leave the real one at `/auth/token` alive and log nobody out.
-    expect(after['__Host-at']).toBeUndefined();
-    expect(after['__Host-rt']).toBeUndefined();
-    expect(after['csrf']).toBeUndefined();
+    expect(after[NAMES().access]).toBeUndefined();
+    expect(after[NAMES().refresh]).toBeUndefined();
+    expect(after[NAMES().csrf]).toBeUndefined();
 
     const refresh = await call({
       method: 'POST',
@@ -836,7 +878,7 @@ describe('two-factor authentication', () => {
 
     expect(verified.statusCode, verified.payload).toBe(200);
     const jar = absorb({}, verified);
-    expect(jar['__Host-at']).toBeTruthy();
+    expect(jar[NAMES().access]).toBeTruthy();
 
     const me = json<{ amr: string[]; mfaSatisfiedAt: string | null }>(
       await call({ method: 'GET', url: '/auth/me', headers: { cookie: cookieHeader(jar) } }),
@@ -921,13 +963,13 @@ describe('two-factor authentication', () => {
         rememberDevice: true,
       },
     });
-    const trustToken = absorb({}, verified)['__Host-td'];
+    const trustToken = absorb({}, verified)[NAMES().trustedDevice];
     expect(trustToken).toBeTruthy();
 
     const next = await call({
       method: 'POST',
       url: '/auth/login',
-      headers: { cookie: `__Host-td=${trustToken}` },
+      headers: { cookie: `${NAMES().trustedDevice}=${trustToken}` },
       payload: { email, password: PASSWORD },
     });
     expect(json<{ status: string }>(next).status).toBe('authenticated');
@@ -958,14 +1000,14 @@ describe('two-factor authentication', () => {
         rememberDevice: true,
       },
     });
-    const trustToken = absorb({}, verified)['__Host-td'];
+    const trustToken = absorb({}, verified)[NAMES().trustedDevice];
 
     const trusted = absorb(
       {},
       await call({
         method: 'POST',
         url: '/auth/login',
-        headers: { cookie: `__Host-td=${trustToken}` },
+        headers: { cookie: `${NAMES().trustedDevice}=${trustToken}` },
         payload: { email, password: PASSWORD },
       }),
     );

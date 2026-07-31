@@ -744,6 +744,43 @@ describe('OpenAPI document', () => {
     expect(doc.tags.length).toBeGreaterThan(0);
   });
 
+  it('⚑ resolves every $ref it publishes', () => {
+    // The document is a deliverable: clients generate from it. A dangling $ref
+    // breaks codegen and Swagger UI while the API itself keeps working perfectly,
+    // so nothing else in this suite would notice.
+    //
+    // It happened. zod extracts any schema carrying an `id` into `definitions`
+    // regardless of `reused: 'inline'`, @fastify/swagger rewrote those refs to
+    // `#/components/schemas/…` without carrying the definitions across, and five
+    // refs pointed at an empty object.
+    const doc = openApiDoc() as unknown as Record<string, unknown>;
+    const components = (doc['components'] as { schemas?: Record<string, unknown> } | undefined)
+      ?.schemas;
+
+    const dangling: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((item, i) => walk(item, `${path}[${i}]`));
+        return;
+      }
+      if (node === null || typeof node !== 'object') return;
+
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key === '$ref' && typeof value === 'string') {
+          const name = /^#\/components\/schemas\/(.+)$/.exec(value)?.[1];
+          if (!name || !components?.[name]) dangling.push(`${path}.$ref -> ${value}`);
+        } else {
+          walk(value, `${path}.${key}`);
+        }
+      }
+    };
+    walk(doc['paths'], 'paths');
+
+    expect(dangling, `unresolvable $ref in the OpenAPI document:\n${dangling.join('\n')}`).toEqual(
+      [],
+    );
+  });
+
   it('uses a relative server url so "Try it out" works from any origin', () => {
     // ⚑ An absolute `http://localhost:3000` makes every Try-it-out request from
     // http://<lan-ip>:3000/docs cross-origin, which CORS blocks with an unhelpful

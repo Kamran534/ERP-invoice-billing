@@ -5,14 +5,14 @@ updated: 2026-07-31
 
 # Testing
 
-**493 tests in three layers**, separated by what they need to run — because a suite
+**501 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
-| `unit` | `*.test.ts` | nothing | ~15 s | 304 |
+| `unit` | `*.test.ts` | nothing | ~15 s | 310 |
 | `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~25 s | 96 |
-| `e2e` | `*.e2e.test.ts` | full stack | ~50 s | 93 |
+| `e2e` | `*.e2e.test.ts` | full stack | ~55 s | 95 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
 alias to their **source**, not `dist/`, so tests never need a prior build, coverage
@@ -169,6 +169,11 @@ If they pass individually, nothing is wrong with the code.
   address a suite shares a single five-registrations-per-hour bucket and fails as
   429s that look like broken handlers. `remoteAddress` per test is also the more
   honest model — these *are* different clients.
+- **⚑ Do not hardcode a value the code derives.** The e2e suite asserted
+  `__Host-at` literally, so it kept passing while the server emitted a name no
+  browser would accept. Read it from config (`app.auth.config.cookies.names`) and
+  assert the *rule* separately — there is now a test that walks every `Set-Cookie`
+  and checks each prefix against what its attributes actually deliver.
 - **⚑ Do not assert an ordering the code does not enforce.** A concurrency test that
   passes because your laptop happened to schedule the reads first is asserting an
   accident, and it will fail on a machine with different core counts — or, worse,
@@ -192,6 +197,16 @@ See [[Decisions]] for the full stories.
 - **`upgrade-insecure-requests` broke the docs UI** for every non-localhost
   visitor. Now covered by four tests, including one that checks the docs CSP
   separately from the API CSP — see [[Security headers]].
+- **⚑ Every auth cookie was silently discarded by browsers.** `__Host-at` went out
+  without `Secure` over plain HTTP, and `__Host-rt` with `Path=/auth/token` — both
+  violate the prefix rules, and a browser's response to that is to drop the cookie
+  and say nothing. Login returned `200` and set nothing. 93 e2e tests passed
+  throughout, because `app.inject()` parses `Set-Cookie` strings and enforces no
+  browser policy at all. Found by opening Swagger UI and clicking Try it out.
+- **⚑ The test env inherited `.env`.** `testEnv()` spreads `process.env`, which
+  vitest has already populated from `.env` — so setting `COOKIE_MODE=both` locally
+  changed what the suite asserted. Anything the tests make claims about is now
+  pinned explicitly.
 - **⚑ The random test double returned the same bytes on every call.** Ten
   "random" recovery codes were ten copies of one code, so "a code works exactly
   once" passed while nine identical spares kept working. Deterministic is not the

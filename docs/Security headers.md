@@ -67,11 +67,17 @@ Three cookies, set together by `apps/api/src/lib/cookies.ts` and never by a
 handler directly — the flags *are* the security property, and they must not drift
 between the route that sets a cookie and the route that clears it.
 
-| Cookie | `HttpOnly` | `Path` | Why that path |
+| Cookie (over HTTPS) | `HttpOnly` | `Path` | Why that path |
 |---|---|---|---|
 | `__Host-at` | yes | `/` | Sent on every API call, which is the point |
-| `__Host-rt` | yes | `/auth/token` | ⚑ Scoped, so the credential that mints sessions never rides along on ordinary requests |
+| `__Secure-rt` | yes | `/auth/token` | ⚑ Scoped, so the credential that mints sessions never rides along on ordinary requests |
 | `csrf` | **no** | `/` | ⚑ Readable on purpose — the client must echo it in a header, and a cross-origin attacker can cause it to be sent but not read |
+
+⚑ The prefixes are **derived from the attributes, not configured**. `__Host-` requires `Secure`,
+`Path=/` and no `Domain`; `__Secure-` requires `Secure`. A cookie that claims a prefix it cannot
+back is discarded by the browser without a word — so over plain HTTP the names drop to `at`, `rt`,
+`td`, and the refresh cookie never takes `__Host-` at all, because its whole point is a scoped
+`Path`. See [[AUTH-MODULE-PLAN#8.3 Cookies & CSRF (cookie mode)]].
 
 `Secure` on all three follows the same `HTTPS_ENABLED` flag as HSTS and the CSP
 upgrade ([[ADR-0008 Gate HTTPS-only headers behind one flag]]) — a `Secure` cookie
@@ -79,8 +85,8 @@ over plain HTTP is silently dropped, and the resulting "login appears to do
 nothing" is genuinely unpleasant to diagnose.
 
 ⚑ Clearing must repeat the exact `path` and `domain`. A browser treats
-`(name, domain, path)` as the identity, so clearing `__Host-rt` at `/` leaves the
-real one at `/auth/token` alive — a logout that returns `204` and signs nobody out.
+`(name, domain, path)` as the identity, so clearing the refresh cookie at `/` leaves
+the real one at `/auth/token` alive — a logout that returns `204` and signs nobody out.
 
 ## Not covered here
 

@@ -82,6 +82,19 @@ export const envSchema = z.object({
   REFRESH_IDLE_TTL_S: int(2_592_000),
   REFRESH_ABSOLUTE_TTL_S: int(7_776_000),
 
+  /**
+   * Where the tokens live (plan §5.5.6).
+   *
+   *  - `cookie` — httpOnly cookies, nothing in the response body. Right for a
+   *    first-party web app: XSS cannot read the tokens.
+   *  - `bearer` — tokens in the body, client stores them. For native apps and
+   *    cross-origin SPAs that have no usable cookie jar.
+   *  - `both`   — sets the cookies *and* returns the tokens. Convenient for
+   *    poking at the API from Swagger UI or curl; ⚑ in production it puts the
+   *    refresh token everywhere a response body goes, so prefer one or the other.
+   */
+  COOKIE_MODE: z.enum(['cookie', 'bearer', 'both']).default('cookie'),
+
   MFA_ENABLED: bool.default(true),
   /** 'admins' falls back to the per-user marker until RBAC lands (plan §10). */
   MFA_ENFORCE: z.enum(['optional', 'admins', 'all']).default('admins'),

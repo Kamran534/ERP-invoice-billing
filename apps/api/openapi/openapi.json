@@ -2082,7 +2082,93 @@
                           ]
                         },
                         "session": {
-                          "$ref": "#/components/schemas/SessionSummary"
+                          "title": "SessionSummary",
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "description": "Present only in `bearer` transport mode. In cookie mode the token is set as `__Host-at` and this field is omitted entirely.",
+                              "type": "string"
+                            },
+                            "refreshToken": {
+                              "description": "`bearer` mode only. Opaque — not a JWT, and not introspectable. Store it in the OS keychain. It is invalidated the moment you use it (§5.5.3).",
+                              "type": "string"
+                            },
+                            "expiresIn": {
+                              "type": "number",
+                              "description": "Access-token lifetime in seconds.",
+                              "example": 600
+                            },
+                            "user": {
+                              "title": "PublicUser",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 320,
+                                      "format": "email",
+                                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                                      "description": "Email address. Compared case-insensitively.",
+                                      "example": "ada@example.com"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "emailVerified": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "mfaEnrolled": {
+                                  "type": "boolean",
+                                  "description": "True when at least one confirmed second factor exists."
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "description": "ISO 8601 timestamp."
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "email",
+                                "emailVerified",
+                                "name",
+                                "status",
+                                "mfaEnrolled",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "expiresIn",
+                            "user"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -2136,7 +2222,93 @@
                           ]
                         },
                         "session": {
-                          "$ref": "#/components/schemas/SessionSummary"
+                          "title": "SessionSummary",
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "description": "Present only in `bearer` transport mode. In cookie mode the token is set as `__Host-at` and this field is omitted entirely.",
+                              "type": "string"
+                            },
+                            "refreshToken": {
+                              "description": "`bearer` mode only. Opaque — not a JWT, and not introspectable. Store it in the OS keychain. It is invalidated the moment you use it (§5.5.3).",
+                              "type": "string"
+                            },
+                            "expiresIn": {
+                              "type": "number",
+                              "description": "Access-token lifetime in seconds.",
+                              "example": 600
+                            },
+                            "user": {
+                              "title": "PublicUser",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 320,
+                                      "format": "email",
+                                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                                      "description": "Email address. Compared case-insensitively.",
+                                      "example": "ada@example.com"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "emailVerified": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "mfaEnrolled": {
+                                  "type": "boolean",
+                                  "description": "True when at least one confirmed second factor exists."
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "description": "ISO 8601 timestamp."
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "email",
+                                "emailVerified",
+                                "name",
+                                "status",
+                                "mfaEnrolled",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "expiresIn",
+                            "user"
+                          ],
+                          "additionalProperties": false
                         },
                         "enrollBy": {
                           "anyOf": [
@@ -3365,7 +3537,69 @@
                   "type": "object",
                   "properties": {
                     "user": {
-                      "$ref": "#/components/schemas/PublicUser"
+                      "title": "PublicUser",
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 320,
+                              "format": "email",
+                              "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                              "description": "Email address. Compared case-insensitively.",
+                              "example": "ada@example.com"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "emailVerified": {
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "active",
+                            "suspended"
+                          ]
+                        },
+                        "mfaEnrolled": {
+                          "type": "boolean",
+                          "description": "True when at least one confirmed second factor exists."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "ISO 8601 timestamp."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "emailVerified",
+                        "name",
+                        "status",
+                        "mfaEnrolled",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
                     },
                     "org": {
                       "anyOf": [
@@ -3702,7 +3936,66 @@
                     "sessions": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/DeviceSession"
+                        "title": "DeviceSession",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "current": {
+                            "type": "boolean"
+                          },
+                          "deviceLabel": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "ip": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "amr": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Auth methods used: e.g. [\"pwd\",\"otp\"]."
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "lastSeenAt": {
+                            "type": "string"
+                          },
+                          "absoluteExpiresAt": {
+                            "type": "string",
+                            "description": "Hard cap. Never extended, for any reason."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "current",
+                          "deviceLabel",
+                          "ip",
+                          "amr",
+                          "createdAt",
+                          "lastSeenAt",
+                          "absoluteExpiresAt"
+                        ],
+                        "additionalProperties": false
                       }
                     }
                   },
@@ -5612,7 +5905,93 @@
                           ]
                         },
                         "session": {
-                          "$ref": "#/components/schemas/SessionSummary"
+                          "title": "SessionSummary",
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "description": "Present only in `bearer` transport mode. In cookie mode the token is set as `__Host-at` and this field is omitted entirely.",
+                              "type": "string"
+                            },
+                            "refreshToken": {
+                              "description": "`bearer` mode only. Opaque — not a JWT, and not introspectable. Store it in the OS keychain. It is invalidated the moment you use it (§5.5.3).",
+                              "type": "string"
+                            },
+                            "expiresIn": {
+                              "type": "number",
+                              "description": "Access-token lifetime in seconds.",
+                              "example": 600
+                            },
+                            "user": {
+                              "title": "PublicUser",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 320,
+                                      "format": "email",
+                                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                                      "description": "Email address. Compared case-insensitively.",
+                                      "example": "ada@example.com"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "emailVerified": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "mfaEnrolled": {
+                                  "type": "boolean",
+                                  "description": "True when at least one confirmed second factor exists."
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "description": "ISO 8601 timestamp."
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "email",
+                                "emailVerified",
+                                "name",
+                                "status",
+                                "mfaEnrolled",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "expiresIn",
+                            "user"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -5666,7 +6045,93 @@
                           ]
                         },
                         "session": {
-                          "$ref": "#/components/schemas/SessionSummary"
+                          "title": "SessionSummary",
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "description": "Present only in `bearer` transport mode. In cookie mode the token is set as `__Host-at` and this field is omitted entirely.",
+                              "type": "string"
+                            },
+                            "refreshToken": {
+                              "description": "`bearer` mode only. Opaque — not a JWT, and not introspectable. Store it in the OS keychain. It is invalidated the moment you use it (§5.5.3).",
+                              "type": "string"
+                            },
+                            "expiresIn": {
+                              "type": "number",
+                              "description": "Access-token lifetime in seconds.",
+                              "example": 600
+                            },
+                            "user": {
+                              "title": "PublicUser",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 320,
+                                      "format": "email",
+                                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                                      "description": "Email address. Compared case-insensitively.",
+                                      "example": "ada@example.com"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "emailVerified": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "mfaEnrolled": {
+                                  "type": "boolean",
+                                  "description": "True when at least one confirmed second factor exists."
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "description": "ISO 8601 timestamp."
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "email",
+                                "emailVerified",
+                                "name",
+                                "status",
+                                "mfaEnrolled",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "expiresIn",
+                            "user"
+                          ],
+                          "additionalProperties": false
                         },
                         "enrollBy": {
                           "anyOf": [
@@ -6374,7 +6839,93 @@
                           ]
                         },
                         "session": {
-                          "$ref": "#/components/schemas/SessionSummary"
+                          "title": "SessionSummary",
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "description": "Present only in `bearer` transport mode. In cookie mode the token is set as `__Host-at` and this field is omitted entirely.",
+                              "type": "string"
+                            },
+                            "refreshToken": {
+                              "description": "`bearer` mode only. Opaque — not a JWT, and not introspectable. Store it in the OS keychain. It is invalidated the moment you use it (§5.5.3).",
+                              "type": "string"
+                            },
+                            "expiresIn": {
+                              "type": "number",
+                              "description": "Access-token lifetime in seconds.",
+                              "example": 600
+                            },
+                            "user": {
+                              "title": "PublicUser",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 320,
+                                      "format": "email",
+                                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                                      "description": "Email address. Compared case-insensitively.",
+                                      "example": "ada@example.com"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "emailVerified": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "mfaEnrolled": {
+                                  "type": "boolean",
+                                  "description": "True when at least one confirmed second factor exists."
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "description": "ISO 8601 timestamp."
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "email",
+                                "emailVerified",
+                                "name",
+                                "status",
+                                "mfaEnrolled",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "expiresIn",
+                            "user"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -6428,7 +6979,93 @@
                           ]
                         },
                         "session": {
-                          "$ref": "#/components/schemas/SessionSummary"
+                          "title": "SessionSummary",
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "description": "Present only in `bearer` transport mode. In cookie mode the token is set as `__Host-at` and this field is omitted entirely.",
+                              "type": "string"
+                            },
+                            "refreshToken": {
+                              "description": "`bearer` mode only. Opaque — not a JWT, and not introspectable. Store it in the OS keychain. It is invalidated the moment you use it (§5.5.3).",
+                              "type": "string"
+                            },
+                            "expiresIn": {
+                              "type": "number",
+                              "description": "Access-token lifetime in seconds.",
+                              "example": 600
+                            },
+                            "user": {
+                              "title": "PublicUser",
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "email": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 320,
+                                      "format": "email",
+                                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                                      "description": "Email address. Compared case-insensitively.",
+                                      "example": "ada@example.com"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "emailVerified": {
+                                  "type": "boolean"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "active",
+                                    "suspended"
+                                  ]
+                                },
+                                "mfaEnrolled": {
+                                  "type": "boolean",
+                                  "description": "True when at least one confirmed second factor exists."
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "description": "ISO 8601 timestamp."
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "email",
+                                "emailVerified",
+                                "name",
+                                "status",
+                                "mfaEnrolled",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "expiresIn",
+                            "user"
+                          ],
+                          "additionalProperties": false
                         },
                         "enrollBy": {
                           "anyOf": [
@@ -6740,7 +7377,58 @@
                     "factors": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/MfaFactor"
+                        "title": "MfaFactor",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "totp",
+                              "webauthn",
+                              "sms"
+                            ]
+                          },
+                          "label": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          },
+                          "lastUsedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type",
+                          "label",
+                          "confirmed",
+                          "lastUsedAt",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "recoveryCodesRemaining": {
@@ -8397,7 +9085,45 @@
                     "devices": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/TrustedDevice"
+                        "title": "TrustedDevice",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "label": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "lastUsedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "expiresAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "lastUsedAt",
+                          "expiresAt"
+                        ],
+                        "additionalProperties": false
                       }
                     }
                   },

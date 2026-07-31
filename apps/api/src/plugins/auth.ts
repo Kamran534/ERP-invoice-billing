@@ -58,6 +58,7 @@ export function buildAuthConfig(env: Env): AuthConfig {
       },
     },
     cookies: {
+      mode: env.COOKIE_MODE,
       // ⚑ Must agree with HSTS and the CSP upgrade — one flag drives all of them
       // (ADR-0008), because a `Secure` cookie over plain HTTP is simply dropped
       // and the resulting "login does nothing" is unpleasant to diagnose.

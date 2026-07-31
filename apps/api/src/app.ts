@@ -21,6 +21,7 @@ import { rootRoutes } from './routes/root.js';
 import { healthRoutes } from './routes/health.js';
 import { wellKnownRoutes } from './routes/wellknown.js';
 import { sessionRoutes } from './routes/auth/session.js';
+import { pageRoutes } from './routes/pages.js';
 import { otpRoutes } from './routes/auth/otp.js';
 
 export interface BuildAppOptions {
@@ -133,6 +134,9 @@ export async function buildApp(
   await app.register(wellKnownRoutes);
   await app.register(sessionRoutes);
   await app.register(otpRoutes);
+
+  // HTML pages so emailed links are clickable without a front-end running.
+  await app.register(pageRoutes);
 
   if (options.extend) await options.extend(app);
 

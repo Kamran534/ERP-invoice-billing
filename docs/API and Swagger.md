@@ -121,11 +121,22 @@ Two carve-outs, both narrow:
 
 ### Where the tokens end up
 
+Set `COOKIE_MODE` to `cookie` (default), `bearer`, or `both`.
+
 | | Cookie mode (default) | Bearer mode |
 |---|---|---|
 | Access token | `__Host-at`, `httpOnly`, `Path=/` | response body |
-| Refresh token | `__Host-rt`, `httpOnly`, **`Path=/auth/token`** | response body |
+| Refresh token | `__Secure-rt`, `httpOnly`, **`Path=/auth/token`** | response body |
 | CSRF token | `csrf`, readable | not used |
+
+The prefixes shown are the HTTPS ones and are derived, not configured — see
+[[Security headers]].
+
+⚑ **Swagger UI's Authorize button needs a token**, and cookie mode returns none.
+For poking at the API by hand, set `COOKIE_MODE=both` — the cookies are still set
+*and* the tokens come back in the body, so you can paste one into `bearerAuth`.
+It is a convenience, not a production setting: it puts the refresh token
+everywhere a response body goes.
 
 ⚑ The refresh cookie's `Path` is load-bearing. Scoped to `/` it would ride along
 on every ordinary API call, so any request log, proxy, or mis-set CORS header on

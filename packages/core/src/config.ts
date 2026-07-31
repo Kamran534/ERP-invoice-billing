@@ -145,23 +145,69 @@ export const lockoutConfigSchema = z.object({
   resetWindow: dur('15m'),
 });
 
-export const cookieConfigSchema = z.object({
-  /** 'cookie' for first-party web, 'bearer' for native/cross-origin (§5.5.6). */
-  mode: z.enum(['cookie', 'bearer', 'both']).default('cookie'),
-  domain: z.string().optional(),
-  sameSite: z.enum(['strict', 'lax', 'none']).default('lax'),
-  secure: z.boolean().default(true),
-  names: z
-    .object({
-      access: z.string().default('__Host-at'),
-      refresh: z.string().default('__Host-rt'),
-      csrf: z.string().default('csrf'),
-      trustedDevice: z.string().default('__Host-td'),
-    })
-    .prefault({}),
-  /** Scoping the refresh cookie means it is never sent to ordinary API routes. */
-  refreshPath: z.string().default('/auth/token'),
-});
+export const cookieConfigSchema = z
+  .object({
+    /** 'cookie' for first-party web, 'bearer' for native/cross-origin (§5.5.6). */
+    mode: z.enum(['cookie', 'bearer', 'both']).default('cookie'),
+    domain: z.string().optional(),
+    sameSite: z.enum(['strict', 'lax', 'none']).default('lax'),
+    secure: z.boolean().default(true),
+    names: z
+      .object({
+        access: z.string().default('at'),
+        refresh: z.string().default('rt'),
+        csrf: z.string().default('csrf'),
+        trustedDevice: z.string().default('td'),
+      })
+      .prefault({}),
+    /** Scoping the refresh cookie means it is never sent to ordinary API routes. */
+    refreshPath: z.string().default('/auth/token'),
+  })
+  .transform(applyCookiePrefixes);
+
+/**
+ * ⚑ Cookie name prefixes are not decoration — a browser **rejects** a cookie whose
+ * name claims a guarantee its attributes do not provide, and says nothing.
+ *
+ *   `__Host-`   requires Secure **and** `Path=/` **and** no `Domain`
+ *   `__Secure-` requires Secure
+ *
+ * This is applied here rather than left to the deployment because getting it wrong
+ * does not fail loudly. It shipped wrong: `__Host-at` was sent without `Secure`
+ * over plain HTTP, and `__Host-rt` was sent with `Path=/auth/token`, so every
+ * browser silently discarded both. Login returned `200`, set two cookies, stored
+ * none of them, and the next request was an anonymous `TOKEN_INVALID`.
+ *
+ * So the prefix is *derived* from what the attributes can actually back:
+ *
+ *  - **access**, **trusted device** — `Path=/`, so `__Host-` when secure and no
+ *    domain is set; `__Secure-` when a domain rules `__Host-` out; bare otherwise.
+ *  - **refresh** — deliberately scoped to `refreshPath`, which permanently
+ *    disqualifies `__Host-`. `__Secure-` when secure, bare otherwise. Path scoping
+ *    keeps the long-lived credential off every ordinary API call, which is worth
+ *    more day to day than the subdomain-shadowing protection `__Host-` adds.
+ *  - **csrf** — never prefixed. It is deliberately readable by JavaScript, and a
+ *    prefix would imply a hardening it does not have.
+ */
+function applyCookiePrefixes<T extends {
+  secure: boolean;
+  domain?: string | undefined;
+  names: { access: string; refresh: string; csrf: string; trustedDevice: string };
+}>(config: T): T {
+  const strip = (name: string) => name.replace(/^(__Host-|__Secure-)/, '');
+  const hostPrefix = config.secure && !config.domain ? '__Host-' : config.secure ? '__Secure-' : '';
+  const securePrefix = config.secure ? '__Secure-' : '';
+
+  return {
+    ...config,
+    names: {
+      access: `${hostPrefix}${strip(config.names.access)}`,
+      refresh: `${securePrefix}${strip(config.names.refresh)}`,
+      csrf: strip(config.names.csrf),
+      trustedDevice: `${hostPrefix}${strip(config.names.trustedDevice)}`,
+    },
+  };
+}
 
 export const authConfigSchema = z.object({
   appName: z.string().min(1),
