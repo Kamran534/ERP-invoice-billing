@@ -71,6 +71,27 @@ export const csrfPlugin = fp(
       const path = request.url.split('?')[0] ?? '';
       if (CSRF_EXEMPT.has(path)) return;
 
+      // ⚑ An explicit `Authorization: Bearer` is not ambient authority, so there is
+      // nothing for CSRF to defend.
+      //
+      // CSRF exists because a browser attaches cookies to cross-site requests
+      // whether or not the page meant it. It does not attach an `Authorization`
+      // header: setting one cross-origin requires a preflight the target has to
+      // permit, and the attacker would need the token itself — at which point CSRF
+      // is beside the point.
+      //
+      // This matters in `both` mode, where a caller authenticating by bearer still
+      // has session cookies sitting in the same browser. Without this, Swagger UI's
+      // Authorize button gets `CSRF_FAILED` on every write: the token is doing the
+      // work, and the cookies are only along for the ride.
+      //
+      // ⚑ Safe only because `readAccessToken` agrees: when a Bearer header is
+      // present in a mode that permits it, that is the credential used — it never
+      // silently falls back to the cookie if the header is malformed. If those two
+      // ever disagree, this becomes a bypass.
+      const authorization = request.headers.authorization;
+      if (config.cookies.mode !== 'cookie' && authorization?.startsWith('Bearer ')) return;
+
       const { access, refresh, csrf } = config.cookies.names;
       const cookie = readCookie(request, csrf);
 

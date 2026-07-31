@@ -104,6 +104,11 @@ export function readAccessToken(request: FastifyRequest, config: AuthConfig): st
 
   if (mode !== 'cookie') {
     const header = request.headers.authorization;
+    // ⚑ Present means used, even when malformed — the early `return` is the point,
+    // not an accident of style. The CSRF hook skips its check whenever it sees a
+    // `Bearer ` header, on the grounds that an explicit credential is not ambient;
+    // if this fell back to the cookie for an empty or broken header, that skip
+    // would become a bypass. The two must decide identically.
     if (header?.startsWith('Bearer ')) return header.slice(7).trim() || null;
   }
 

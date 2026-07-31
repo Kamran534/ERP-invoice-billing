@@ -523,6 +523,86 @@ describe('CSRF', () => {
     expect(response.statusCode).toBe(200);
   });
 
+  it('⚑ does not gate a bearer-authenticated write, even with cookies present', async () => {
+    // Its own instance: this suite runs in `cookie` mode, and the case only exists
+    // in a deployment that also accepts bearer.
+    const instance = await buildApp(
+      loadEnv({
+        ...process.env,
+        NODE_ENV: 'test',
+        COOKIE_MODE: 'both',
+        HTTPS_ENABLED: 'false',
+        LOG_LEVEL: 'silent',
+        SWAGGER_ENABLED: 'false',
+        REDIS_KEY_PREFIX: `e2e-bearer-${Date.now()}:`,
+        MAX_EVENT_LOOP_DELAY_MS: '60000',
+        MAX_HEAP_USED_BYTES: String(8 * 1024 ** 3),
+        MAX_RSS_BYTES: String(8 * 1024 ** 3),
+        DB_CONNECT_TIMEOUT_MS: '30000',
+        REDIS_COMMAND_TIMEOUT_MS: '10000',
+        ...(process.env['TEST_DATABASE_URL']
+          ? { DATABASE_URL: process.env['TEST_DATABASE_URL'] }
+          : {}),
+      } as NodeJS.ProcessEnv),
+    );
+
+    try {
+      const email = freshEmail();
+      await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/register',
+        payload: { email, password: PASSWORD },
+      });
+      const verifyToken = (await mailpitFind(email)).Text.match(/token=([^\s&]+)/)?.[1];
+      await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/verify-email',
+        payload: { token: verifyToken },
+      });
+
+      const login = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/login',
+        payload: { email, password: PASSWORD },
+      });
+      const jar = absorb({}, login);
+      const token = json<{ session: { accessToken: string } }>(login).session.accessToken;
+
+      // Exactly what Swagger UI's Authorize button produces: a bearer token doing
+      // the work, and the browser attaching the session cookies anyway. An
+      // `Authorization` header is not ambient — a cross-site attacker cannot set
+      // one — so there is nothing here for CSRF to defend. Demanding the echo
+      // header made every authenticated write fail with CSRF_FAILED.
+      const response = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/logout-all',
+        headers: { cookie: cookieHeader(jar), authorization: `Bearer ${token}` },
+      });
+
+      expect(response.statusCode, response.payload).toBe(200);
+    } finally {
+      await instance.close();
+    }
+  }, 30_000);
+
+  it('⚑ still gates a cookie-authenticated write when a bearer header is absent', async () => {
+    const email = await signUpAndVerify();
+    const jar = await signIn(email);
+
+    // The exemption is about the *header*, not about being authenticated. Remove
+    // it and the ambient path is protected exactly as before.
+    const response = await call({
+      method: 'POST',
+      url: '/auth/logout-all',
+      headers: { cookie: cookieHeader(jar) },
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
   it('never gates a read', async () => {
     const email = await signUpAndVerify();
     const jar = await signIn(email);

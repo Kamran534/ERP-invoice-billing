@@ -106,11 +106,18 @@ cookie mode. The `csrf` cookie is set alongside the session cookies and is
 deliberately **not** `httpOnly` — the client has to be able to read it to echo it,
 and a cross-origin attacker can cause it to be *sent* but not *read*.
 
-Two carve-outs, both narrow:
+Three carve-outs, all narrow:
 
 - **Routes that run before a session exists** — login, register, verify-email,
   password reset, OTP and MFA verify. None of them acts on an existing session
   using ambient credentials, which is the property that makes a route forgeable.
+- **⚑ Requests authenticated by `Authorization: Bearer`.** CSRF exists because a
+  browser attaches cookies to cross-site requests whether or not the page meant
+  it. It does not attach an `Authorization` header — setting one cross-origin
+  needs a preflight the target has to permit, and the attacker would need the
+  token anyway. This is what makes Swagger UI's Authorize button work in `both`
+  mode, where session cookies from an earlier login are still in the jar and were
+  triggering `CSRF_FAILED` on every write.
 - **⚑ Requests carrying no session cookie at all** are skipped rather than refused.
   This is not the bypass it resembles: a cross-site attacker cannot *remove* the
   victim's cookies, so a request with none provably cannot act on an ambient

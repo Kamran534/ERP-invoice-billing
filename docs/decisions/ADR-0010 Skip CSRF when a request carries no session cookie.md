@@ -63,6 +63,23 @@ are attacks.
 security decision onto every client, and the copy would have to live somewhere
 JavaScript can reach — which is the thing `httpOnly` exists to prevent.
 
+## Addendum, 2026-08-01: bearer requests are exempt too
+
+The same reasoning, reached from the other direction. In `both` mode a caller
+authenticating with `Authorization: Bearer` still has session cookies sitting in
+the browser, so the rule above saw a cookie and demanded the echo header — and
+every write from Swagger UI's Authorize button failed with `CSRF_FAILED`.
+
+A bearer header is not ambient authority: a browser never attaches one by itself,
+setting it cross-origin requires a preflight the target has to permit, and an
+attacker who has the token does not need CSRF. So a request carrying
+`Authorization: Bearer` skips the check in any mode that accepts bearer.
+
+⚑ This is only sound because `readAccessToken` agrees: when a `Bearer ` header is
+present in such a mode, that is the credential used — it never falls back to the
+cookie for a malformed header. If those two ever disagree, the exemption becomes a
+bypass. Both are commented to say so.
+
 ## Consequences
 
 An attacker can force a logout only for a user who has no session, which is not an
