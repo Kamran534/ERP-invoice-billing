@@ -13,10 +13,20 @@
 // drizzle dependency.
 import { createDb, schema, sql, getTableName, type DbHandle } from '@auth/db';
 
+/**
+ * ⚑ The fallback port is 55432 — what our compose stack publishes — and not the
+ * conventional 5432, which on a machine running several stacks is somebody else's
+ * database. This module hands out a handle that `truncateAll` empties between
+ * tests, so a plausible-but-wrong default is not a connection error, it is data
+ * loss in a project nobody was thinking about.
+ *
+ * `vitest.config.ts` loads `.env` before any of this runs, so in practice the
+ * fallback is only reached by something importing these helpers outside vitest.
+ */
 export const TEST_DATABASE_URL =
   process.env['TEST_DATABASE_URL'] ??
   process.env['DATABASE_URL'] ??
-  'postgres://app:app_dev_password@localhost:5432/billing';
+  'postgres://app:app_dev_password@localhost:55432/billing';
 
 /** Every auth table, derived from the schema so it can never drift. */
 export const authTableNames: string[] = Object.values(schema).map((table) => getTableName(table));

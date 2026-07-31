@@ -97,6 +97,19 @@ pnpm openapi               # write openapi/openapi.json for codegen or a CI diff
 - **Registration is capped at 5 per hour per IP.** Clicking through the signup form
   half a dozen times while testing will earn you a `429` that looks like a bug. Use
   a different address *and* a different client, or wait out the window.
+- **`POSTGRES_PORT` and `DATABASE_URL` must move together.** If you remap the
+  published port because 5432 is already taken by another project, the URL has to
+  follow. They are separate lines in `.env` and nothing cross-checks them.
+
+  ⚑ Getting this wrong does not produce "connection refused" — it produces a
+  connection to *somebody else's* Postgres, because 5432 on a machine running
+  several stacks is rarely free. The symptom is
+  `password authentication failed for user "app"`, which reads like a credentials
+  problem in this project and is really a wrong-server problem.
+
+  `drizzle.config.ts` now loads `.env` itself and throws when `DATABASE_URL` is
+  absent rather than defaulting to `localhost:5432` — a tool that connects
+  somewhere plausible-but-wrong is worse than one that refuses to start.
 
 ## Related
 
