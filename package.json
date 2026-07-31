@@ -15,7 +15,6 @@
     "dev": "turbo run dev --parallel",
     "start": "turbo run build --filter=@app/api... && pnpm --filter @app/api run start",
     "clean": "turbo run clean && rimraf node_modules coverage",
-
     "test": "vitest run --project unit",
     "test:watch": "vitest --project unit",
     "test:int": "vitest run --project integration",
@@ -24,13 +23,11 @@
     "test:coverage": "vitest run --coverage",
     "verify": "pnpm build && pnpm typecheck && pnpm test && pnpm docs:check",
     "docs:check": "node scripts/check-docs.mjs docs",
-
     "db:generate": "pnpm --filter @auth/db exec drizzle-kit generate",
     "db:migrate": "pnpm --filter @auth/db run migrate",
     "db:studio": "pnpm --filter @auth/db exec drizzle-kit studio",
     "smoke": "pnpm --filter @app/api run smoke",
     "openapi": "pnpm --filter @app/api run openapi",
-
     "up": "docker compose up -d --wait",
     "up:obs": "docker compose --profile obs up -d --wait",
     "down": "docker compose down",
@@ -40,12 +37,12 @@
     "load": "docker compose --profile perf run --rm k6 run /scripts/login.js"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "@vitest/coverage-v8": "^3.0.0",
-    "rimraf": "^6.0.1",
-    "tsx": "^4.19.2",
-    "turbo": "^2.3.3",
-    "typescript": "^5.8.0",
-    "vitest": "^3.0.0"
+    "@types/node": "^24.13.3",
+    "@vitest/coverage-v8": "^3.2.7",
+    "rimraf": "^6.1.3",
+    "tsx": "^4.23.1",
+    "turbo": "^2.10.7",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   }
 }
