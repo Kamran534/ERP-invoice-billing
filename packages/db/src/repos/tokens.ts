@@ -91,6 +91,47 @@ export function createOneTimeTokenRepo(db: Database, deps: RepoDeps): OneTimeTok
     },
 
     /**
+     * ⚑ One statement again, and for the same reason as `consume`: the increment
+     * and the cap check must not be separable, or N parallel guesses each read the
+     * same pre-increment count and all pass a cap of 5.
+     *
+     * The row is deliberately *not* consumed. A wrong code spends an attempt; a
+     * right one is what redeems the challenge, via `markConsumed`.
+     */
+    async claimAttempt(hash, purpose) {
+      const result = await db.execute<{
+        id: string;
+        user_id: string | null;
+        payload: Record<string, unknown>;
+        attempts: number;
+        max_attempts: number;
+      }>(
+        sql`UPDATE auth_one_time_tokens SET attempts = attempts + 1
+            WHERE token_hash = ${Buffer.from(hash)}
+              AND purpose = ${purpose}
+              AND consumed_at IS NULL
+              AND expires_at > now()
+              AND attempts < max_attempts
+            RETURNING id, user_id, payload, attempts, max_attempts`,
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        id: row.id,
+        userId: row.user_id,
+        payload: row.payload ?? {},
+        attemptsRemaining: row.max_attempts - row.attempts,
+      };
+    },
+
+    async markConsumed(id) {
+      await db
+        .update(oneTimeTokens)
+        .set({ consumedAt: new Date() })
+        .where(and(eq(oneTimeTokens.id, id), isNull(oneTimeTokens.consumedAt)));
+    },
+
+    /**
      * Used after a successful reset so a second outstanding link cannot be used,
      * and after an email change so a stale confirmation cannot resurrect the old
      * address.

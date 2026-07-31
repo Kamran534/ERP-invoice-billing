@@ -240,9 +240,9 @@ describe('auth routes: contracts are live even where handlers are not', () => {
     ['POST', '/auth/password/forgot', { email: 'ada@example.com' }, '§5.7'],
     ['POST', '/auth/otp/request', { destination: 'ada@example.com' }, '§5.11'],
     ['POST', '/auth/otp/verify', { challengeId: '0191f0aa-0000-7000-8000-000000000000', code: '123456' }, '§5.11'],
-    ['POST', '/auth/mfa/verify', { mfaToken: 'x', method: 'totp', code: '123456' }, '§5.4'],
-    ['GET', '/auth/mfa', undefined, '§5.4'],
-    ['GET', '/auth/trusted-devices', undefined, '§5.4'],
+    // §5.4's own endpoints are live; email OTP *as a second factor* still routes
+    // through the OTP engine, which is not.
+    ['POST', '/auth/mfa/verify', { mfaToken: 'x', method: 'email_otp', code: '123456' }, '§5.11'],
   ];
 
   it.each(unimplemented)(
@@ -271,7 +271,7 @@ describe('auth routes: contracts are live even where handlers are not', () => {
       payload: { email: 'nobody-at-all@example.test', password: 'correct horse battery staple' },
     });
 
-    // ⛑ The failure mode this guards against changed shape but not substance:
+    // ⚑ The failure mode this guards against changed shape but not substance:
     // it used to be a stub that set a cookie while verifying nothing, and it is
     // now a handler that sets one on a path that should have refused.
     expect(response.statusCode).toBe(401);
@@ -390,7 +390,7 @@ describe('error envelope', () => {
   });
 
   it('rejects a non-uuid path parameter', async () => {
-    // ⛑ With a CSRF pair, or the onRequest hook refuses at 403 before the
+    // ⚑ With a CSRF pair, or the onRequest hook refuses at 403 before the
     // schema is ever consulted — which would make this assert the wrong layer.
     const response = await app.inject({
       method: 'DELETE',

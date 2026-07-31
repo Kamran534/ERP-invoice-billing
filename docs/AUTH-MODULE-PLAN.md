@@ -502,7 +502,7 @@ token** — deliberately not a session:
 | Property | Value |
 |---|---|
 | TTL | 5 min |
-| Uses | single |
+| Uses | single — but ⚑ *consumed on success only*. A wrong code spends an attempt; consuming up front would mean one guess per challenge, which is a different (and worse) design than five |
 | Claims | `{ cid, sub, amr: ['pwd'], availableMethods: ['totp','email_otp','webauthn','recovery'] }` |
 | Binding | `sha256(user_agent ‖ ip/24)` — must be redeemed from the same client |
 | Authorizes | exactly one endpoint, `POST /auth/mfa/verify` (and `/auth/mfa/otp/send`) |
@@ -513,9 +513,19 @@ cannot read a single byte of application data. `availableMethods` lets the UI of
 authenticator / email me a code / use a passkey / use a recovery code" without a second round trip.
 
 #### 5.4.3 Verification
-- **TOTP**: accept ±1 timestep (30 s) for clock drift. ⚑ Record the consumed
-  `(userId, factorId, timestep)` triple in the rate limiter so the same code cannot be replayed
-  inside its own validity window — drift tolerance is otherwise a 90-second replay window.
+- **TOTP**: accept ±1 timestep (30 s) for clock drift. ⚑ The same code must not be replayable
+  inside its own validity window — drift tolerance is otherwise a 90-second window in which a
+  shoulder-surfed or phished code still works.
+
+  Implemented as a monotonic `last_used_timestep` on the factor row, advanced by a guarded
+  `UPDATE ... WHERE last_used_timestep IS NULL OR last_used_timestep < $step`. A code whose step is
+  not strictly greater is refused *even though it verified*. This replaced the originally-specified
+  "record the `(userId, factorId, timestep)` triple in the rate limiter" for one reason: a replay
+  guard in a cache **fails open** when the cache is down, and the failure mode of an open TOTP
+  replay guard is silent. One integer column in the row that is already being read fails closed and
+  costs nothing.
+- **Enrolment burns its own timestep.** ⚑ The code that confirms a factor cannot also be the first
+  login code — otherwise the ±1 window means the enrolment screen hands over a working credential.
 - **Email/SMS OTP**: delegate to §5.11's verify path with `purpose='mfa'`.
 - **Passkey**: WebAuthn assertion (§5.13).
 - **Recovery code**: single-use (§5.4.4).

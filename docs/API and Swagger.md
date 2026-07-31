@@ -111,7 +111,7 @@ Two carve-outs, both narrow:
 - **Routes that run before a session exists** — login, register, verify-email,
   password reset, OTP and MFA verify. None of them acts on an existing session
   using ambient credentials, which is the property that makes a route forgeable.
-- **⛑ Requests carrying no session cookie at all** are skipped rather than refused.
+- **⚑ Requests carrying no session cookie at all** are skipped rather than refused.
   This is not the bypass it resembles: a cross-site attacker cannot *remove* the
   victim's cookies, so a request with none provably cannot act on an ambient
   credential. Refusing them instead breaks the two calls a client must always be
@@ -127,11 +127,11 @@ Two carve-outs, both narrow:
 | Refresh token | `__Host-rt`, `httpOnly`, **`Path=/auth/token`** | response body |
 | CSRF token | `csrf`, readable | not used |
 
-⛑ The refresh cookie's `Path` is load-bearing. Scoped to `/` it would ride along
+⚑ The refresh cookie's `Path` is load-bearing. Scoped to `/` it would ride along
 on every ordinary API call, so any request log, proxy, or mis-set CORS header on
 any route becomes an exposure of the one credential that mints new sessions.
 
-⛑ In cookie mode the tokens are **omitted from the body**, not merely ignored.
+⚑ In cookie mode the tokens are **omitted from the body**, not merely ignored.
 Returning them as well would put the refresh token everywhere a response body goes.
 
 ## Error contract

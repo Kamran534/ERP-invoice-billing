@@ -35,7 +35,10 @@ import type {
   RevokeReason,
   Session,
   SessionRepo,
+  SecretBox,
   TokenService,
+  TotpProvider,
+  TotpSecret,
   TrustedDeviceRepo,
   User,
   UserId,
@@ -69,12 +72,23 @@ export class FakeClock implements Clock {
   }
 }
 
-/** Deterministic ids and secrets, so failures are reproducible. */
+/**
+ * Deterministic ids and secrets, so failures are reproducible.
+ *
+ * ⚑ Deterministic is not the same as constant. `bytes()` advances the counter on
+ * every call; an earlier version read it without incrementing, so every call
+ * returned the identical buffer — which made ten "random" recovery codes ten
+ * copies of one code, and made a real duplicate-secret bug invisible to the tests
+ * that were meant to catch it.
+ */
 export function createSequentialRandom(prefix = 'test'): RandomSource & { reset(): void } {
   let counter = 0;
   const next = () => `${prefix}-${(counter += 1).toString().padStart(6, '0')}`;
   return {
-    bytes: (n: number) => new Uint8Array(Array.from({ length: n }, (_, i) => (counter + i) % 256)),
+    bytes: (n: number) => {
+      counter += 1;
+      return new Uint8Array(Array.from({ length: n }, (_, i) => (counter * 31 + i * 7) % 256));
+    },
     uuid: () => {
       const n = (counter += 1).toString(16).padStart(12, '0');
       return `0191f0aa-0000-7000-8000-${n}`;
@@ -275,24 +289,56 @@ export function createInMemoryRefreshTokenRepo(clock: Clock = realClock): Refres
 
 export function createInMemoryOneTimeTokenRepo(clock: Clock = realClock): OneTimeTokenRepo {
   const rows: Array<{
+    id: string;
     userId: UserId | null;
     purpose: OneTimeTokenPurpose;
     hash: string;
     payload: Record<string, unknown>;
+    attempts: number;
+    maxAttempts: number;
     expiresAt: Date;
     consumedAt: Date | null;
   }> = [];
+  let seq = 0;
 
   return {
     async issue(input) {
       rows.push({
+        id: `ott-${(seq += 1)}`,
         userId: input.userId,
         purpose: input.purpose,
         hash: hex(input.hash),
         payload: input.payload ?? {},
+        attempts: 0,
+        maxAttempts: 5,
         expiresAt: input.expiresAt,
         consumedAt: null,
       });
+    },
+
+    /** Mirrors the SQL: increments, checks the cap, and does NOT consume. */
+    async claimAttempt(hash, purpose) {
+      const row = rows.find(
+        (r) =>
+          r.hash === hex(hash) &&
+          r.purpose === purpose &&
+          !r.consumedAt &&
+          r.expiresAt.getTime() > clock.now().getTime() &&
+          r.attempts < r.maxAttempts,
+      );
+      if (!row) return null;
+      row.attempts += 1;
+      return {
+        id: row.id,
+        userId: row.userId,
+        payload: row.payload,
+        attemptsRemaining: row.maxAttempts - row.attempts,
+      };
+    },
+
+    async markConsumed(id) {
+      const row = rows.find((r) => r.id === id && !r.consumedAt);
+      if (row) row.consumedAt = clock.now();
     },
 
     async consume(hash, purpose) {
@@ -406,6 +452,7 @@ export function createInMemoryMfaRepo(clock: Clock = realClock): MfaRepo {
         secretEnc: input.secretEnc,
         confirmedAt: null,
         lastUsedAt: null,
+        lastUsedTimestep: null,
         createdAt: clock.now(),
       };
       factors.set(factor.id, factor);
@@ -419,6 +466,14 @@ export function createInMemoryMfaRepo(clock: Clock = realClock): MfaRepo {
     },
     async listAllFactors(userId) {
       return [...factors.values()].filter((f) => f.userId === userId);
+    },
+    /** Mirrors the guarded UPDATE: only ever moves forward. */
+    async advanceTimestep(id, at, timestep) {
+      const factor = factors.get(id);
+      if (!factor) return false;
+      if (factor.lastUsedTimestep !== null && factor.lastUsedTimestep >= timestep) return false;
+      factors.set(id, { ...factor, lastUsedTimestep: timestep, lastUsedAt: at });
+      return true;
     },
     async confirmFactor(id, at) {
       const factor = factors.get(id);
@@ -612,6 +667,67 @@ export function createFakeTokenService(): TokenService & { minted: AccessClaimsL
 }
 
 type AccessClaimsLike = Parameters<TokenService['mintAccess']>[0];
+
+/**
+ * A `SecretBox` that is trivially reversible but still enforces the one property
+ * worth testing: the purpose is bound, so a ciphertext sealed for one use cannot
+ * be opened for another.
+ */
+export function createFakeSecretBox(): SecretBox {
+  return {
+    encrypt(plaintext, purpose) {
+      return new TextEncoder().encode(`${purpose}:${plaintext}`);
+    },
+    decrypt(payload, purpose) {
+      const text = new TextDecoder().decode(payload);
+      const prefix = `${purpose}:`;
+      // ⚑ The real AEAD fails here too, via the AAD. A double that ignored the
+      // purpose would let a test pass while production rejected the ciphertext.
+      if (!text.startsWith(prefix)) throw new Error('decryption failed');
+      return text.slice(prefix.length);
+    },
+  };
+}
+
+/**
+ * A deterministic TOTP provider on the injected clock.
+ *
+ * `codeFor` is the point: a test needs to know what the authenticator app would be
+ * showing at a given instant, including one timestep either side, so it can drive
+ * the happy path and the drift-replay case without real time passing.
+ */
+export function createFakeTotp(
+  clock: Clock = realClock,
+  options: { period?: number; window?: number } = {},
+): TotpProvider & { codeFor(secret: TotpSecret, at?: Date): string; timestepAt(at?: Date): number } {
+  const period = options.period ?? 30;
+  const window = options.window ?? 1;
+  let seq = 0;
+
+  const timestepAt = (at: Date = clock.now()) => Math.floor(at.getTime() / 1000 / period);
+
+  const codeAt = (secret: TotpSecret, step: number): string => {
+    const digest = createHash('sha256').update(`${secret.base32}:${step}`).digest();
+    return String(digest.readUInt32BE(0) % 1_000_000).padStart(6, '0');
+  };
+
+  return {
+    timestepAt,
+    generateSecret: () => ({ base32: `FAKESECRET${(seq += 1)}` }),
+    provisioningUri: (secret, account, issuer) =>
+      `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret.base32}&issuer=${encodeURIComponent(issuer)}`,
+    codeFor: (secret, at) => codeAt(secret, timestepAt(at)),
+    verify(secret, code, at) {
+      const current = timestepAt(at ?? clock.now());
+      for (let drift = -window; drift <= window; drift += 1) {
+        if (codeAt(secret, current + drift) === code) {
+          return { valid: true, timestep: current + drift };
+        }
+      }
+      return { valid: false, timestep: null };
+    },
+  };
+}
 
 /**
  * Deterministic `CryptoDeps`.

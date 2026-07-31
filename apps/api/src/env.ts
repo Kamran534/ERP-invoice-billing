@@ -82,6 +82,15 @@ export const envSchema = z.object({
   REFRESH_IDLE_TTL_S: int(2_592_000),
   REFRESH_ABSOLUTE_TTL_S: int(7_776_000),
 
+  MFA_ENABLED: bool.default(true),
+  /** 'admins' falls back to the per-user marker until RBAC lands (plan §10). */
+  MFA_ENFORCE: z.enum(['optional', 'admins', 'all']).default('admins'),
+  /**
+   * ⚑ The riskiest toggle in the module (plan §5.4.5). A remembered device skips
+   * the second factor for 30 days; off unless a deployment decides otherwise.
+   */
+  MFA_TRUSTED_DEVICES: bool.default(false),
+
   /**
    * ⚑ Off means known-breached passwords are accepted. It exists because an
    * air-gapped deployment cannot reach api.pwnedpasswords.com and would otherwise

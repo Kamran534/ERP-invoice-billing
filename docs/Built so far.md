@@ -10,10 +10,10 @@ An inventory of what actually exists, as opposed to what is specified. The spec 
 [[AUTH-MODULE-PLAN]] and is complete; this note is the part of it that runs.
 
 > [!info] Where the line is
-> Sign up, verify, log in, refresh, read yourself, list devices and sign out are
-> **live over HTTP** — real cookies, real CSRF, real rotation. Password reset,
-> password change, the OTP engine and the 2FA endpoints still answer `501` with a
-> pointer to the section that specifies them.
+> Sign up, verify, log in, **two-factor**, refresh, read yourself, list devices and
+> sign out are **live over HTTP** — real cookies, real CSRF, real rotation, real
+> TOTP. Password reset, password change and the OTP engine still answer `501` with
+> a pointer to the section that specifies them.
 
 ## Where the code lives
 
@@ -85,6 +85,10 @@ All in `packages/core/src/use-cases/`, all unit-tested against in-memory ports.
 | `rotateRefreshToken` | §5.5.3 | Rotation with reuse detection, and the recency rule from [[ADR-0009 Decide refresh-token theft on recency, not on read ordering]] |
 | `issueSession` | §5.5.2 | The single place a session is created, so the absolute cap is set identically whichever door the user came through |
 | `logout` / `logoutAll` | §5.6 | Idempotent and silent; logout-all also kills trusted devices |
+| `startTotpEnrollment` / `confirmTotpEnrollment` | §5.4.1 | Secret shown once, AEAD at rest; the factor stays inert until a code proves it, and confirming revokes every other session |
+| `verifyMfaChallenge` | §5.4.3 | ⚑ A verified code is still refused when its timestep is not newer — drift tolerance is otherwise a 90-second replay window. Five wrong guesses destroy the *challenge* |
+| `regenerateRecoveryCodes` | §5.4.4 | Replaces the whole set atomically; warns by email at ≤2 remaining |
+| trusted devices | §5.4.5 | Absolute 30-day cap with no sliding renewal, LRU-capped, never accepted for step-up |
 | `listSessions` / `revokeSession` | §5.6 | ⚑ Ownership checked before existence is admitted, so session ids cannot be enumerated |
 
 Login also branches correctly into 2FA: it issues a client-bound challenge token
@@ -101,18 +105,22 @@ when policy requires a factor the user has not enrolled (§5.4.6).
 | `POST /auth/login` | Live — returns `authenticated`, `mfa_required` or `mfa_enrollment_required` |
 | `POST /auth/token/refresh` | Live — rotates, and 409s the multi-tab race |
 | `POST /auth/logout`, `POST /auth/logout-all` | Live |
+| `POST /auth/mfa/verify` | Live for `totp` and `recovery`; `email_otp` / `sms_otp` return `501` (§5.11) |
+| `GET /auth/mfa`, `POST /auth/mfa/totp/setup` and `/confirm`, `DELETE /auth/mfa/factors/{id}`, `POST /auth/mfa/recovery-codes` | Live |
+| `GET` and `DELETE /auth/trusted-devices` | Live |
 | `GET /auth/me`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}` | Live |
 | Password reset / change (§5.7, §5.8) | `501` |
-| OTP engine (§5.11), 2FA endpoints (§5.4) | `501` |
+| OTP engine (§5.11) | `501` |
 
-⚑ `mfa_required` is reachable but not completable: login issues the challenge
-token, and `/auth/mfa/verify` is still a `501`. A deployment with a confirmed TOTP
-factor would be unable to finish signing in — which is fine today because nothing
-can enroll one yet, and is the reason 2FA is the next slice rather than a later one.
+Step-up is enforced on the routes that change what protects the account — factor
+removal, recovery-code regeneration, trusted-device revoke-all, `logout-all`.
+⚑ It is still *partial*: a user with no confirmed factor passes, because password
+re-authentication needs `/auth/reauth`, which arrives with §5.8. A user who does
+have a factor is held to it, and a trusted device never satisfies it.
 
 ## Tests
 
-449 across three layers — see [[Testing]] for the split and the reasons for it.
+493 across three layers — see [[Testing]] for the split and the reasons for it.
 Coverage floors live in `vitest.config.ts` rather than in prose.
 
 ## Not built yet
@@ -120,8 +128,10 @@ Coverage floors live in `vitest.config.ts` rather than in prose.
 - Password reset and change (§5.7, §5.8), and with them `/auth/reauth` — which is
   why step-up is only partially enforced: a password-only session currently passes
   the check on `logout-all` because there is no way for it to re-authenticate.
-- The OTP engine (§5.11) and the 2FA endpoints (§5.4) — the *challenge* is issued
-  by `login`, but nothing verifies one yet.
+- The OTP engine (§5.11) — which is also why `email_otp` as a *second* factor
+  returns `501` from an otherwise-live `/auth/mfa/verify`.
+- WebAuthn factors (§5.13). The type exists in the schema and in the enum; nothing
+  registers or verifies one.
 - RBAC, orgs and permissions (§10). `mfa.enforce: 'admins'` currently falls back to
   a per-user marker for want of a role table.
 - OAuth/SSO (§5.10), passkeys (§5.13), API keys (§4.6), impersonation.

@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import type { FastifyInstance, InjectOptions } from 'fastify';
+import { createTotpService } from '@auth/crypto';
 import { loadEnv } from './env.js';
 import { buildApp } from './app.js';
 
@@ -36,6 +37,9 @@ beforeAll(async () => {
       LOG_LEVEL: 'silent',
       SWAGGER_ENABLED: 'false',
       REDIS_KEY_PREFIX: `e2e-flows-${Date.now()}:`,
+      // Exercised by the 2FA block below; off by default everywhere else.
+      MFA_TRUSTED_DEVICES: 'true',
+      MFA_ENFORCE: 'optional',
       MAX_EVENT_LOOP_DELAY_MS: '60000',
       MAX_HEAP_USED_BYTES: String(8 * 1024 ** 3),
       MAX_RSS_BYTES: String(8 * 1024 ** 3),
@@ -716,5 +720,307 @@ describe('logging out', () => {
     // 403 for "exists but not yours" versus 404 for "no such id" would let anyone
     // enumerate session ids.
     expect(response.statusCode).toBe(404);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('two-factor authentication', () => {
+  const totp = createTotpService({ digits: 6, period: 30, window: 1 });
+
+  /** Enrols a real TOTP factor through the API and returns what an app would hold. */
+  async function enrol(jar: Jar): Promise<{ secret: string; recoveryCodes: string[] }> {
+    const setup = await call({
+      method: 'POST',
+      url: '/auth/mfa/totp/setup',
+      headers: authHeaders(jar),
+    });
+    expect(setup.statusCode, setup.payload).toBe(200);
+    const { factorId, secret, recoveryCodes } = json<{
+      factorId: string;
+      secret: string;
+      provisioningUri: string;
+      recoveryCodes: string[];
+    }>(setup);
+
+    // ⚑ Nothing usable before confirmation — recovery codes handed out here would
+    // be a working bypass behind an enrolment the user then abandoned.
+    expect(recoveryCodes).toEqual([]);
+
+    const confirmed = await call({
+      method: 'POST',
+      url: '/auth/mfa/totp/confirm',
+      headers: authHeaders(jar),
+      payload: { factorId, code: totp.generate({ base32: secret }) },
+    });
+    expect(confirmed.statusCode, confirmed.payload).toBe(200);
+
+    return { secret, recoveryCodes: json<{ recoveryCodes: string[] }>(confirmed).recoveryCodes };
+  }
+
+  /**
+   * The code an authenticator would show one timestep from now.
+   *
+   * ⚑ Not the current code. Confirming an enrolment burns the timestep it used,
+   * so the very next login cannot reuse it — that is the replay guard working, and
+   * a real user simply waits for the display to tick over. Computed from the step
+   * boundary rather than `now + 30s`, which would land two steps out when the call
+   * happens near the end of a window and fall outside the ±1 drift tolerance.
+   */
+  const nextCode = (secret: string): string =>
+    totp.generate({ base32: secret }, new Date((totp.timestepAt() + 1) * 30_000));
+
+  const startChallenge = async (email: string): Promise<string> => {
+    const response = await call({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email, password: PASSWORD },
+    });
+    return json<{ mfaToken: string }>(response).mfaToken;
+  };
+
+  it('enrols, confirms, and hands over recovery codes once', async () => {
+    const email = await signUpAndVerify();
+    const jar = await signIn(email);
+
+    const { recoveryCodes } = await enrol(jar);
+    expect(recoveryCodes).toHaveLength(10);
+    expect(new Set(recoveryCodes).size).toBe(10);
+
+    const state = json<{ enrolled: boolean; recoveryCodesRemaining: number }>(
+      await call({ method: 'GET', url: '/auth/mfa', headers: { cookie: cookieHeader(jar) } }),
+    );
+    expect(state.enrolled).toBe(true);
+    expect(state.recoveryCodesRemaining).toBe(10);
+  });
+
+  it('⚑ turns the next login into a challenge that carries no session', async () => {
+    const email = await signUpAndVerify();
+    await enrol(await signIn(email));
+
+    const response = await call({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email, password: PASSWORD },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = json<{ status: string; availableMethods: string[] }>(response);
+    expect(body.status).toBe('mfa_required');
+    expect(body.availableMethods).toContain('totp');
+    // The first factor passed; the login has not. A cookie here would make the
+    // second factor optional for anyone who ignores the response body.
+    expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('completes the challenge with a TOTP code and records both factors', async () => {
+    const email = await signUpAndVerify();
+    const { secret } = await enrol(await signIn(email));
+
+    const verified = await call({
+      method: 'POST',
+      url: '/auth/mfa/verify',
+      payload: {
+        mfaToken: await startChallenge(email),
+        method: 'totp',
+        code: nextCode(secret),
+      },
+    });
+
+    expect(verified.statusCode, verified.payload).toBe(200);
+    const jar = absorb({}, verified);
+    expect(jar['__Host-at']).toBeTruthy();
+
+    const me = json<{ amr: string[]; mfaSatisfiedAt: string | null }>(
+      await call({ method: 'GET', url: '/auth/me', headers: { cookie: cookieHeader(jar) } }),
+    );
+    expect(me.amr).toEqual(['pwd', 'totp']);
+    expect(me.mfaSatisfiedAt).not.toBeNull();
+  });
+
+  it('⚑ refuses the same code twice', async () => {
+    const email = await signUpAndVerify();
+    const { secret } = await enrol(await signIn(email));
+    const code = nextCode(secret);
+
+    const first = await call({
+      method: 'POST',
+      url: '/auth/mfa/verify',
+      payload: { mfaToken: await startChallenge(email), method: 'totp', code },
+    });
+    expect(first.statusCode, first.payload).toBe(200);
+
+    // Still inside its own drift window, so still cryptographically valid — which
+    // is exactly the window someone who watched it being typed is working in.
+    const replay = await call({
+      method: 'POST',
+      url: '/auth/mfa/verify',
+      payload: { mfaToken: await startChallenge(email), method: 'totp', code },
+    });
+    expect(replay.statusCode).toBe(401);
+  });
+
+  it('⚑ destroys the challenge after five wrong codes', async () => {
+    const email = await signUpAndVerify();
+    const { secret } = await enrol(await signIn(email));
+    const mfaToken = await startChallenge(email);
+
+    for (let i = 0; i < 5; i += 1) {
+      const wrong = await call({
+        method: 'POST',
+        url: '/auth/mfa/verify',
+        payload: { mfaToken, method: 'totp', code: '000000' },
+      });
+      expect(wrong.statusCode).toBe(401);
+    }
+
+    // Six digits is ~20 bits; the cap is the only thing making that safe, so the
+    // challenge itself has to die rather than just the attempt.
+    const correct = await call({
+      method: 'POST',
+      url: '/auth/mfa/verify',
+      payload: { mfaToken, method: 'totp', code: nextCode(secret) },
+    });
+    expect(correct.statusCode).toBe(429);
+  });
+
+  it('accepts a recovery code, once', async () => {
+    const email = await signUpAndVerify();
+    const { recoveryCodes } = await enrol(await signIn(email));
+
+    const useCode = async (code: string) =>
+      call({
+        method: 'POST',
+        url: '/auth/mfa/verify',
+        payload: { mfaToken: await startChallenge(email), method: 'recovery', code },
+      });
+
+    expect((await useCode(recoveryCodes[0]!)).statusCode).toBe(200);
+    expect((await useCode(recoveryCodes[0]!)).statusCode).toBe(401);
+    expect((await useCode(recoveryCodes[1]!)).statusCode).toBe(200);
+  });
+
+  it('remembers a device and skips the challenge next time', async () => {
+    const email = await signUpAndVerify();
+    const { secret } = await enrol(await signIn(email));
+
+    const verified = await call({
+      method: 'POST',
+      url: '/auth/mfa/verify',
+      payload: {
+        mfaToken: await startChallenge(email),
+        method: 'totp',
+        code: nextCode(secret),
+        rememberDevice: true,
+      },
+    });
+    const trustToken = absorb({}, verified)['__Host-td'];
+    expect(trustToken).toBeTruthy();
+
+    const next = await call({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { cookie: `__Host-td=${trustToken}` },
+      payload: { email, password: PASSWORD },
+    });
+    expect(json<{ status: string }>(next).status).toBe('authenticated');
+
+    const me = json<{ amr: string[]; mfaSatisfiedAt: string | null }>(
+      await call({
+        method: 'GET',
+        url: '/auth/me',
+        headers: { cookie: cookieHeader(absorb({}, next)) },
+      }),
+    );
+    expect(me.amr).toEqual(['pwd', 'device']);
+    // ⚑ Trust skips the prompt; it does not count as having presented a factor.
+    expect(me.mfaSatisfiedAt).toBeNull();
+  });
+
+  it('⚑ refuses step-up on a session that only used a trusted device', async () => {
+    const email = await signUpAndVerify();
+    const { secret } = await enrol(await signIn(email));
+
+    const verified = await call({
+      method: 'POST',
+      url: '/auth/mfa/verify',
+      payload: {
+        mfaToken: await startChallenge(email),
+        method: 'totp',
+        code: nextCode(secret),
+        rememberDevice: true,
+      },
+    });
+    const trustToken = absorb({}, verified)['__Host-td'];
+
+    const trusted = absorb(
+      {},
+      await call({
+        method: 'POST',
+        url: '/auth/login',
+        headers: { cookie: `__Host-td=${trustToken}` },
+        payload: { email, password: PASSWORD },
+      }),
+    );
+
+    // A stolen laptop can read the account; it must not be able to change what
+    // protects it (§5.4.5).
+    const attempt = await call({
+      method: 'POST',
+      url: '/auth/mfa/recovery-codes',
+      headers: authHeaders(trusted),
+    });
+    expect(attempt.statusCode).toBe(403);
+    expect(json<{ error: { code: string } }>(attempt).error.code).toBe('REAUTH_REQUIRED');
+  });
+
+  it('lists and revokes remembered devices', async () => {
+    const email = await signUpAndVerify();
+    const { secret } = await enrol(await signIn(email));
+
+    const jar = absorb(
+      {},
+      await call({
+        method: 'POST',
+        url: '/auth/mfa/verify',
+        payload: {
+          mfaToken: await startChallenge(email),
+          method: 'totp',
+          code: nextCode(secret),
+          rememberDevice: true,
+        },
+      }),
+    );
+
+    const listed = json<{ devices: Array<{ id: string }> }>(
+      await call({
+        method: 'GET',
+        url: '/auth/trusted-devices',
+        headers: { cookie: cookieHeader(jar) },
+      }),
+    );
+    expect(listed.devices).toHaveLength(1);
+
+    const revoked = await call({
+      method: 'DELETE',
+      url: `/auth/trusted-devices/${listed.devices[0]!.id}`,
+      headers: authHeaders(jar),
+    });
+    expect(revoked.statusCode).toBe(204);
+  });
+
+  it('⚑ revokes the other sessions when 2FA is switched on', async () => {
+    const email = await signUpAndVerify();
+    const stale = await signIn(email);
+    const current = await signIn(email);
+
+    await enrol(current);
+
+    // Whoever was already signed in is exactly who the new factor excludes.
+    const check = await call({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { cookie: cookieHeader(stale) },
+    });
+    expect(check.statusCode).toBe(401);
   });
 });

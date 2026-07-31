@@ -173,6 +173,8 @@ export interface MfaFactor {
   secretEnc: Uint8Array | null;
   confirmedAt: Date | null;
   lastUsedAt: Date | null;
+  /** ⚑ Last accepted TOTP timestep. A code at or below this is a replay (§5.4.3). */
+  lastUsedTimestep: number | null;
   createdAt: Date;
 }
 
@@ -189,6 +191,12 @@ export interface MfaRepo {
   listAllFactors(userId: UserId): Promise<MfaFactor[]>;
   confirmFactor(id: string, at: Date): Promise<void>;
   touchFactor(id: string, at: Date): Promise<void>;
+  /**
+   * ⚑ Records the timestep a code matched, atomically and only if it advances.
+   * Returns false when the step is not newer — which is a replay, and the caller
+   * must refuse even though the code verified.
+   */
+  advanceTimestep(id: string, at: Date, timestep: number): Promise<boolean>;
   removeFactor(id: string): Promise<void>;
   /** Purges unconfirmed factors older than the cutoff (§5.4.1). */
   purgeUnconfirmed(userId: UserId, olderThan: Date): Promise<number>;
@@ -214,6 +222,25 @@ export interface OneTimeTokenRepo {
     hash: Uint8Array,
     purpose: OneTimeTokenPurpose,
   ): Promise<{ userId: UserId | null; payload: Record<string, unknown> } | null>;
+  /**
+   * For tokens that are *presented against* rather than redeemed — the 2FA
+   * challenge, where the token names the challenge and a separate code is guessed.
+   *
+   * ⚑ Increments and checks the cap in one statement, so parallel guesses cannot
+   * each read the same pre-increment count. Returns null when the token is
+   * unknown, consumed, expired, or out of attempts — the caller must not be able
+   * to tell those apart. The row is *not* consumed; a correct code does that.
+   */
+  claimAttempt(
+    hash: Uint8Array,
+    purpose: OneTimeTokenPurpose,
+  ): Promise<{
+    id: string;
+    userId: UserId | null;
+    payload: Record<string, unknown>;
+    attemptsRemaining: number;
+  } | null>;
+  markConsumed(id: string): Promise<void>;
   revokeAllForUser(userId: UserId, purpose: OneTimeTokenPurpose): Promise<number>;
 }
 
@@ -359,6 +386,40 @@ export interface AuthDomainEvent {
 
 export interface EventBus {
   publish(event: AuthDomainEvent): Promise<void>;
+}
+
+/**
+ * Authenticated encryption for the few secrets that must be recoverable rather
+ * than hashed — a TOTP secret has to be readable to verify a code (§4.3).
+ *
+ * ⚑ `purpose` is bound as associated data, so a ciphertext cannot be moved from
+ * one use to another. Implemented by `@auth/crypto`; named differently from its
+ * `Aead` so importing both is unambiguous.
+ */
+export interface SecretBox {
+  encrypt(plaintext: string, purpose: 'totp-secret' | 'signing-key'): Uint8Array;
+  decrypt(payload: Uint8Array, purpose: 'totp-secret' | 'signing-key'): string;
+}
+
+export interface TotpSecret {
+  /** Base32 — what the user types when they cannot scan the QR code. */
+  base32: string;
+}
+
+export interface TotpVerification {
+  valid: boolean;
+  /**
+   * ⚑ The absolute timestep the code matched, or null. The caller must record it:
+   * without it the ±1-step drift tolerance is a 90-second replay window (§5.4.3).
+   */
+  timestep: number | null;
+}
+
+/** RFC 6238. Implemented by `@auth/crypto`'s `TotpService`. */
+export interface TotpProvider {
+  generateSecret(): TotpSecret;
+  provisioningUri(secret: TotpSecret, account: string, issuer: string): string;
+  verify(secret: TotpSecret, code: string, at?: Date): TotpVerification;
 }
 
 export interface BreachChecker {

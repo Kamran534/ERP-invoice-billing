@@ -21,7 +21,9 @@ import {
 } from '@auth/core';
 import { createRepos } from '@auth/db';
 import {
+  createAead,
   createHibpBreachChecker,
+  createTotpService,
   nodeCryptoDeps,
   nodeRandom,
   uuidv7,
@@ -62,6 +64,11 @@ export function buildAuthConfig(env: Env): AuthConfig {
       secure: env.HTTPS_ENABLED,
     },
     password: { checkBreached: env.PASSWORD_BREACH_CHECK },
+    mfa: {
+      enabled: env.MFA_ENABLED,
+      enforce: env.MFA_ENFORCE,
+      trustedDevices: { enabled: env.MFA_TRUSTED_DEVICES },
+    },
     email: { fromAddress: env.MAIL_FROM },
   });
 }
@@ -101,6 +108,10 @@ export const authPlugin = fp(
       hasher: app.hasher,
       tokens: app.tokens,
       mailer: app.mailer,
+      // ⚑ Both, or the 2FA use-cases refuse. A TOTP provider without a key store
+      // enrols secrets it cannot read back.
+      secrets: createAead(app.env.AUTH_KEK),
+      totp: createTotpService(config.mfa.totp),
       breachChecker,
       events: {
         // Nothing subscribes yet. The port exists so a use-case never has to know

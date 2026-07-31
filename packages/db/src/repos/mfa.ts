@@ -18,6 +18,7 @@ const toFactor = (row: FactorRow): MfaFactor => ({
   secretEnc: row.secretEnc,
   confirmedAt: row.confirmedAt,
   lastUsedAt: row.lastUsedAt,
+  lastUsedTimestep: row.lastUsedTimestep,
   createdAt: row.createdAt,
 });
 
@@ -72,6 +73,25 @@ export function createMfaRepo(db: Database, deps: RepoDeps): MfaRepo {
 
     async touchFactor(id, at) {
       await db.update(mfaFactors).set({ lastUsedAt: at }).where(eq(mfaFactors.id, id));
+    },
+
+    /**
+     * ⚑ Guarded by `last_used_timestep IS NULL OR last_used_timestep < $step`, so
+     * two requests presenting the same code concurrently cannot both succeed.
+     * Returning false means the code verified but was already spent — which inside
+     * TOTP's ±1-step drift window is exactly what a replay looks like (§5.4.3).
+     */
+    async advanceTimestep(id, at, timestep) {
+      const result = await db
+        .update(mfaFactors)
+        .set({ lastUsedTimestep: timestep, lastUsedAt: at })
+        .where(
+          and(
+            eq(mfaFactors.id, id),
+            sql`(${mfaFactors.lastUsedTimestep} IS NULL OR ${mfaFactors.lastUsedTimestep} < ${timestep})`,
+          ),
+        );
+      return (result.rowCount ?? 0) > 0;
     },
 
     async removeFactor(id) {

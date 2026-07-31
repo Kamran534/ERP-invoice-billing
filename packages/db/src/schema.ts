@@ -250,6 +250,16 @@ export const mfaFactors = pgTable(
     /** ⚑ Unconfirmed factors never satisfy a challenge and are purged (§5.4.1). */
     confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    /**
+     * ⚑ The last TOTP timestep accepted for this factor. A code is refused unless
+     * its timestep is strictly greater.
+     *
+     * Without it, the ±1-step drift tolerance that makes TOTP usable is also a
+     * 90-second window in which a shoulder-surfed or phished code can be replayed.
+     * Monotonic rather than a set of seen values: strictly-greater is simpler, and
+     * it is stronger than remembering the last N.
+     */
+    lastUsedTimestep: bigint('last_used_timestep', { mode: 'number' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(now),
   },
   (t) => [index('idx_mfa_factors_user').on(t.userId).where(sql`confirmed_at IS NOT NULL`)],
@@ -365,6 +375,18 @@ export const oneTimeTokens = pgTable(
     tokenHash: bytea('token_hash').notNull(),
     /** e.g. { newEmail } for email_change, { orgId, roleId } for org_invite. */
     payload: jsonb('payload').notNull().default({}),
+    /**
+     * ⚑ Attempt accounting for tokens that are *presented against* rather than
+     * simply redeemed — the 2FA challenge (§5.4.2), where the token identifies the
+     * challenge and a separate code is what gets guessed. Incremented atomically,
+     * and the whole challenge dies at the cap rather than just the attempt.
+     *
+     * Redis would have been the obvious home; it is the wrong one. A cap that
+     * fails open on a cache outage is unlimited TOTP guesses against a six-digit
+     * secret.
+     */
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(5),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     /** ⚑ Set by a single atomic UPDATE ... WHERE consumed_at IS NULL (§4.4). */
     consumedAt: timestamp('consumed_at', { withTimezone: true }),

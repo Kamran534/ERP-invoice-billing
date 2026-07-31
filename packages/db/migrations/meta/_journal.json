@@ -8,6 +8,13 @@
       "when": 1785417170454,
       "tag": "0000_far_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785517888759,
+      "tag": "0001_panoramic_jamie_braddock",
+      "breakpoints": true
     }
   ]
 }

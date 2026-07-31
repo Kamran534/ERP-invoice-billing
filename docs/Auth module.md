@@ -59,12 +59,13 @@ Argon2 verification to keep the timing honest, and there is a test for it.
 | `/.well-known/jwks.json` | Built |
 | Schema, repositories, crypto (AEAD, TOTP, tokens, hashing) | Built |
 | Register, verify, login, refresh, logout, `/auth/me`, device sessions | **Live over HTTP** — cookies, CSRF, rotation |
+| TOTP enrolment, challenge verify, recovery codes, trusted devices (§5.4) | **Live over HTTP** |
 | Password reset and change (§5.7, §5.8) | Contract published, handler returns `501` |
-| OTP (§5.11) and 2FA (§5.4) endpoints | Contract published, handler returns `501` |
+| OTP (§5.11) | Contract published, handler returns `501` |
 
-⛑ Login can reach `mfa_required` but nothing can complete it, because
-`/auth/mfa/verify` is still a stub — harmless only because no factor can be
-enrolled yet. See [[Built so far]] for the route-by-route state.
+⚑ `email_otp` as a *second* factor still returns `501`: it routes through the OTP
+engine, which is a later phase. TOTP and recovery codes complete a challenge today.
+See [[Built so far]] for the route-by-route state.
 
 A 501 names the section that defines it:
 

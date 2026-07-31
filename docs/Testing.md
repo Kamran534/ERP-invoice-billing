@@ -5,14 +5,14 @@ updated: 2026-07-31
 
 # Testing
 
-**449 tests in three layers**, separated by what they need to run — because a suite
+**493 tests in three layers**, separated by what they need to run — because a suite
 you can only run when Docker is up is a suite people stop running.
 
 | Project | Files | Needs | Time | Count |
 |---|---|---|---|---|
-| `unit` | `*.test.ts` | nothing | ~5 s | 268 |
+| `unit` | `*.test.ts` | nothing | ~15 s | 304 |
 | `integration` | `*.int.test.ts` | Postgres, Mailpit, **outbound internet** | ~25 s | 96 |
-| `e2e` | `*.e2e.test.ts` | full stack | ~55 s | 85 |
+| `e2e` | `*.e2e.test.ts` | full stack | ~50 s | 93 |
 
 Configured as three vitest **projects** in `vitest.config.ts`. Workspace packages
 alias to their **source**, not `dist/`, so tests never need a prior build, coverage
@@ -158,6 +158,12 @@ If they pass individually, nothing is wrong with the code.
   the limiter was bypassed, mis-keyed, or erroring because its store was down.
 - **Timing-sensitive assertions take the minimum of N runs**, not the mean — the
   minimum approximates the uncontended cost and barely moves under load.
+- **⚑ A TOTP test cannot reuse the code that confirmed the enrolment.**
+  Confirming burns that timestep, so the next login has to use the *next* one —
+  which is the replay guard working, not a test artefact. The unit suite moves the
+  fake clock; e2e computes the code from `timestepAt() + 1` rather than
+  `now + 30s`, because the latter lands two steps out when the call happens near a
+  window boundary and then falls outside the ±1 drift tolerance.
 - **⚑ Give each e2e test its own client address.** Rate limits key off
   `request.ip` and `app.inject()` reports 127.0.0.1 for everything, so on one
   address a suite shares a single five-registrations-per-hour bucket and fails as
@@ -186,6 +192,11 @@ See [[Decisions]] for the full stories.
 - **`upgrade-insecure-requests` broke the docs UI** for every non-localhost
   visitor. Now covered by four tests, including one that checks the docs CSP
   separately from the API CSP — see [[Security headers]].
+- **⚑ The random test double returned the same bytes on every call.** Ten
+  "random" recovery codes were ten copies of one code, so "a code works exactly
+  once" passed while nine identical spares kept working. Deterministic is not the
+  same as constant — `createSequentialRandom().bytes()` now advances its counter,
+  and the test asserts the ten codes are distinct.
 - **⚑ The breach check was never wired.** `password.checkBreached` was `true`,
   no `BreachChecker` was constructed, and the use-case treats a missing checker as
   a third-party outage — so it failed open on every signup while the config read

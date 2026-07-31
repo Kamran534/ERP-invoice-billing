@@ -35,13 +35,13 @@ it reads fine on GitHub too — the wikilinks just render as literal `[[text]]` 
 
 [[Built so far]] is the inventory — what exists, as opposed to what is specified.
 
-The short version: sign up, verify, log in, refresh, `/auth/me`, device sessions
-and sign out are **live over HTTP** — real cookies, real CSRF, real rotation.
-Password reset, password change, the OTP engine and the 2FA endpoints still answer
-`501 NOT_IMPLEMENTED` with a pointer to the spec section that defines them.
+The short version: sign up, verify, log in, **two-factor**, refresh, `/auth/me`,
+device sessions and sign out are **live over HTTP** — real cookies, real CSRF, real
+rotation, real TOTP. Password reset, password change and the OTP engine still
+answer `501 NOT_IMPLEMENTED` with a pointer to the spec section that defines them.
 
-Next up is 2FA ([[AUTH-MODULE-PLAN#18. Delivery phases]]), because login can
-already reach `mfa_required` and nothing can complete it yet.
+Next up is password reset and change ([[AUTH-MODULE-PLAN#18. Delivery phases]]),
+which also brings `/auth/reauth` and with it full step-up enforcement.
 
 ## Keeping this vault true
 

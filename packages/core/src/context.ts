@@ -23,9 +23,11 @@ import type {
   PasswordHasher,
   RandomSource,
   RefreshTokenRepo,
+  SecretBox,
   SessionRepo,
   SmsSender,
   TokenService,
+  TotpProvider,
   TrustedDeviceRepo,
   UserRepo,
 } from './ports.js';
@@ -50,6 +52,13 @@ export interface AuthContext {
   tokens: TokenService;
   mailer: Mailer;
   sms?: SmsSender;
+  /**
+   * Optional so a deployment that has disabled every second factor need not carry
+   * a KEK. ⚑ The 2FA use-cases refuse rather than degrade when either is absent —
+   * a factor that cannot be decrypted must not silently stop being required.
+   */
+  secrets?: SecretBox;
+  totp?: TotpProvider;
   /**
    * Optional on purpose. `password.checkBreached` can be on while this is absent
    * (air-gapped deployments, tests), and the policy check treats that as "control
