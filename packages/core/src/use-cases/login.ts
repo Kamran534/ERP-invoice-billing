@@ -17,7 +17,7 @@
 
 import { AuthError, errors } from '../errors.js';
 import { audit, emit, type AuthContext, type RequestContext } from '../context.js';
-import type { Amr, MfaFactor, User } from '../ports.js';
+import type { Amr, MfaFactor, Org, User } from '../ports.js';
 import type { CryptoDeps } from './deps.js';
 import { issueSession, type IssuedSession } from './session.js';
 
@@ -25,7 +25,18 @@ import { issueSession, type IssuedSession } from './session.js';
 export type MfaMethod = 'totp' | 'webauthn' | 'email_otp' | 'sms_otp' | 'recovery';
 
 export interface LoginInput extends RequestContext {
-  email: string;
+  /** An email account. Mutually exclusive with `username` (§5.3.1). */
+  email?: string | null;
+  /** An employee's login name. Requires `org` — it is unique only within one. */
+  username?: string | null;
+  /**
+   * The tenant slug this login is aimed at, from the subdomain the browser used.
+   *
+   * ⚑ Passed in, never read from `Host`. This API sits behind a BFF, so the host
+   * header it sees belongs to the proxy — a tenant chosen by a header the API
+   * cannot vouch for is a tenant an attacker can choose.
+   */
+  org?: string | null;
   password: string;
   /** Raw value of the trusted-device cookie, if the client sent one (§5.4.5). */
   trustedDeviceToken?: string | null;
@@ -58,7 +69,7 @@ export async function login(
   input: LoginInput,
 ): Promise<LoginResult> {
   const now = ctx.clock.now();
-  const user = await ctx.repos.users.findByEmail(input.email.trim());
+  const { user, org } = await resolveAccount(ctx, input);
 
   // ⚑ One branch for "no account" and for "account with no password" (passkey- or
   // SSO-only). Both must cost a full Argon2 verify, or the absence of a password
@@ -115,11 +126,33 @@ export async function login(
   await ctx.repos.users.clearFailedLogins(user.id);
   await maybeRehash(ctx, user, input.password);
 
+  // ⚑ §5.3.1 — the right credentials at the wrong door. An email account may sign
+  // in at a tenant address only if it *owns* that tenant; everybody else there uses
+  // a username. Checked after the password on purpose: before it, this would answer
+  // "is there an account for this address in this organization" to anyone asking.
+  if (org && input.email) {
+    const membership = await ctx.repos.memberships.findActive(user.id, org.id);
+    if (!membership || membership.role.key !== ctx.config.orgs.ownerRole) {
+      await recordFailure(ctx, input, user.id, 'wrong_portal');
+      throw new AuthError(
+        'WRONG_LOGIN_PORTAL',
+        `Only the owner signs in to ${org.name} with an email address. Employees use their username.`,
+      );
+    }
+  }
+
   // ⚑ After the password check, never before. Answering EMAIL_NOT_VERIFIED to an
   // unauthenticated caller would turn this endpoint into an oracle for "this
   // address is registered but not yet verified" — which is precisely the set of
   // addresses worth attacking, since the account is half-built.
+  //
+  // ⚑ And only for accounts that *have* an address. An employee's identity is a
+  // username (§10.12); there is no mailbox to confirm, and the owner creating the
+  // account is the step that email verification stands in for. Without this
+  // condition the gate refuses every employee login with "confirm your email
+  // address" — which they can never do, and which the unit tests caught.
   if (
+    user.email &&
     ctx.config.email.requireVerification &&
     !ctx.config.email.allowUnverifiedLogin &&
     !user.emailVerifiedAt
@@ -167,6 +200,59 @@ export async function login(
     mfaSatisfiedAt: null,
     method: 'password',
   });
+}
+
+/**
+ * Which account is being claimed, and in which tenant.
+ *
+ * ⚑ Every failure in here costs a dummy Argon2 verify and answers
+ * `INVALID_CREDENTIALS` — an unknown tenant slug, a username sent without a
+ * tenant, a username nobody in that tenant holds. Otherwise the login form is a
+ * directory: of which organizations exist, and of who works in them.
+ */
+async function resolveAccount(
+  ctx: AuthContext,
+  input: LoginInput,
+): Promise<{ user: User | null; org: Org | null }> {
+  const email = input.email?.trim() ?? '';
+  const username = input.username?.trim().toLowerCase() ?? '';
+  const slug = input.org?.trim().toLowerCase() ?? '';
+
+  if ((email && username) || (!email && !username)) {
+    await ctx.hasher.verifyDummy(input.password);
+    await recordFailure(ctx, input, null, 'ambiguous_identity');
+    throw errors.invalidCredentials();
+  }
+
+  const org = slug ? await ctx.repos.orgs.findBySlug(slug) : null;
+  if (slug && !org) {
+    await ctx.hasher.verifyDummy(input.password);
+    await recordFailure(ctx, input, null, 'unknown_org');
+    throw errors.invalidCredentials();
+  }
+
+  if (username) {
+    // ⚑ A username with no tenant identifies nobody: the same name can exist in
+    // every organization, so answering it globally would sign somebody in to a
+    // tenant they never named.
+    if (!org) {
+      await ctx.hasher.verifyDummy(input.password);
+      await recordFailure(ctx, input, null, 'username_without_org');
+      throw errors.invalidCredentials();
+    }
+    const found = await ctx.repos.users.findByUsernameInOrg(org.id, username);
+    if (!found) {
+      await ctx.hasher.verifyDummy(input.password);
+      await recordFailure(ctx, input, null, 'unknown_username');
+      throw errors.invalidCredentials();
+    }
+    return { user: found, org };
+  }
+
+  // ⚑ Deliberately returns null rather than throwing: `login` below needs "no
+  // account" and "account with no password" to leave through the *same* branch,
+  // at the same cost. Throwing here would split them.
+  return { user: await ctx.repos.users.findByEmail(email), org };
 }
 
 // ── steps ───────────────────────────────────────────────────────────────────

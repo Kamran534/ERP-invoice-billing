@@ -1,7 +1,7 @@
 ---
 aliases: [POST /auth/register, Registration, Sign up]
 tags: [api, auth]
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # register
@@ -17,6 +17,9 @@ in `packages/core/src/use-cases/register.ts`, wired in
 > be registered, a link is on its way". The response is byte-for-byte identical
 > whether the address was free or already belonged to someone — and so is the time
 > it takes. Everything below that looks redundant exists to keep that true.
+>
+> One setting changes it, deliberately: `REGISTER_REVEAL_EXISTING=true` makes a
+> taken address answer `409` instead. See [[#Telling the caller instead]].
 
 ## Request
 
@@ -71,6 +74,7 @@ configured-on and silently absent is worse than one that is honestly off.
 |---|---|
 | `202` | Accepted. Says nothing about whether the account is new |
 | `400` | Malformed request — not JSON, missing `email`, wrong type |
+| `409` | `CONFLICT` — the address is taken. **Only** when `REGISTER_REVEAL_EXISTING=true` |
 | `422` | Well-formed but unacceptable: `WEAK_PASSWORD`, `PASSWORD_BREACHED` |
 | `429` | Rate limited. `Retry-After` and the `x-ratelimit-*` headers say when |
 | `503` | The Argon2 queue is saturated. Retryable — see [[Performance and scaling]] |
@@ -93,8 +97,9 @@ configured-on and silently absent is worse than one that is honestly off.
    reliably faster to detect. The identical body is worthless if the clock gives
    the answer away.
 3. **The address is looked up.**
-   - *Taken* → a "someone tried to register with your email" notice goes to the
-     **real owner**, an audit row is written with `reason: email_taken`, and the
+   - *Taken* → an audit row is written with `reason: email_taken`, and then one of
+     two things depending on `REGISTER_REVEAL_EXISTING` — by default a "someone
+     tried to register with your email" notice goes to the **real owner** and the
      caller gets the same `202`. The person who learns something is the account
      holder; the caller learns nothing.
    - *Free* → a user row is created with `status: 'pending'`,
@@ -122,6 +127,40 @@ actually use.** If it says `http://localhost:5173` and you are testing from
 `http://172.27.192.1:3000`, the emailed link will point at a `localhost` that
 resolves to the wrong machine. That is the setting working correctly; the value is
 what needs changing.
+
+## Telling the caller instead
+
+`REGISTER_REVEAL_EXISTING=true` (plan [[AUTH-MODULE-PLAN#5.1.1 Revealing an existing account (opt-in)]])
+flips the taken branch:
+
+```json
+409
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "An account already exists for this email address",
+    "details": { "field": "email" }
+  }
+}
+```
+
+⚑ **No mail is sent on this path.** The notice exists to tell the account holder
+something the caller was not told; once the caller *is* told, mailing the owner is
+no longer a security notice — it is a message any stranger can send to any address
+on demand, five times an hour.
+
+What it costs: `/auth/register` becomes an oracle for "does this address have an
+account". What it buys: someone who forgot they already signed up is told so,
+instead of watching an inbox for a link that will never arrive. That trade is
+defensible on an invite-only or single-tenant install and is a poor one on open
+signup, which is why the default is off and `auditProductionConfig` warns when it
+is not.
+
+The hashing order does not change — the password is still hashed before the
+lookup on both paths — so turning the flag back off restores the timing guarantee
+with no other edit. The front end handles both shapes: `register-form.tsx` shows
+the message against the email field with a "sign in instead" link when it sees
+`CONFLICT`, and never branches otherwise.
 
 ## Verifying the address
 
@@ -167,7 +206,8 @@ sends nothing. Open the Mailpit UI (`MAILPIT_HTTP_PORT` in `.env`, `58025` in th
 checkout) and take the token out of the link.
 
 > [!warning] Registering the same address twice will look like it worked
-> That is the enumeration guarantee, not a bug. To check whether an account exists,
+> That is the enumeration guarantee, not a bug — unless this checkout has
+> `REGISTER_REVEAL_EXISTING=true`, which is what a `409` there means. To check whether an account exists,
 > query the database — `select email, status from auth_users where email = '…'` —
 > or watch for the "someone tried to register" mail in Mailpit, which only goes out
 > on the taken branch.
@@ -196,6 +236,7 @@ parameters are tuned in [[Performance and scaling]]; concurrency is capped so th
 | Property | Where |
 |---|---|
 | Identical response for a taken address | `register.test.ts`, `auth-flows.e2e.test.ts` |
+| `409` and no mail when the reveal is on | `register.test.ts`, `auth-flows.e2e.test.ts` |
 | Hashing happens on both branches | `register.test.ts` — counts hasher calls |
 | Link built from config, not the request | `register.test.ts` |
 | Breach check fails open, and says so | `register.test.ts`, `breach.int.test.ts` |

@@ -127,6 +127,56 @@ services:
   # ── Mail catcher (SMTP sink + web UI + REST API) ───────────────────────────
   # Nothing ever leaves the machine. The API talks SMTP to :1025; you read the
   # mail at http://localhost:8025. The smoke test asserts delivery via its API.
+  # ── Object storage ─────────────────────────────────────────────────────────
+  #
+  # MinIO speaks the S3 API, so the application code has no idea it is not S3 —
+  # the only difference in production is the endpoint and the credentials.
+  minio:
+    image: minio/minio:latest
+    container_name: billing-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "${S3_ACCESS_KEY_ID:-billing_dev}"
+      MINIO_ROOT_PASSWORD: "${S3_SECRET_ACCESS_KEY:-billing_dev_password}"
+      # ⚑ The browser fetches logos straight from this host, so the URL the API
+      # stores has to be one a browser can reach. Inside the compose network the
+      # service is `minio:9000`; from the host it is localhost on the published
+      # port, and those are not the same string.
+      MINIO_BROWSER_REDIRECT_URL: "http://localhost:${MINIO_CONSOLE_PORT:-59001}"
+      TZ: UTC
+    ports:
+      - "${MINIO_PORT:-59000}:9000"
+      - "${MINIO_CONSOLE_PORT:-59001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: creates the bucket and opens *only* the public prefix for reads.
+  #
+  # ⚑ `anonymous set download` on `public/` and nothing else. Logos end up in
+  # emails and on invoices, so they have to be fetchable without a signature —
+  # but a bucket that is wholly public is one careless `putObject` away from
+  # leaking whatever else lands in it.
+  minio-init:
+    image: minio/mc:latest
+    container_name: billing-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 '${S3_ACCESS_KEY_ID:-billing_dev}' '${S3_SECRET_ACCESS_KEY:-billing_dev_password}' &&
+      mc mb --ignore-existing local/${S3_BUCKET:-billing} &&
+      mc anonymous set download local/${S3_BUCKET:-billing}/public &&
+      echo 'bucket ${S3_BUCKET:-billing} ready'
+      "
+    restart: "no"
+
   mailpit:
     image: axllent/mailpit:latest
     container_name: billing-mailpit
@@ -304,6 +354,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+  miniodata:
   mailpitdata:
   prometheusdata:
   grafanadata:

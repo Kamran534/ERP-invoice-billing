@@ -119,3 +119,53 @@ export const inviteBody = z.object({
 export const acceptInviteBody = z.object({ token: z.string().min(20) });
 
 export const changeRoleBody = z.object({ role: z.string().min(1) });
+
+// ── Employee accounts (§10.12) ─────────────────────────────────────────────
+
+/**
+ * ⚑ Narrow on purpose. This name is typed by a person, daily, on a phone as often
+ * as a keyboard — and it lives in a DNS-adjacent world of case-folded lookups, so
+ * anything that renders differently from how it is stored is a support ticket.
+ */
+export const usernameField = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9][a-z0-9._-]{1,38}[a-z0-9]$/, 'Use 3–40 letters, digits, dot, dash or underscore')
+  .meta({ description: '3–40 characters: letters, digits, dot, dash, underscore.', example: 'ahmed.raza' });
+
+export const employeeSummary = z
+  .object({
+    userId: uuidField,
+    membershipId: uuidField,
+    username: z.string(),
+    name: z.string().nullable(),
+    role: z.string(),
+    status: z.enum(['invited', 'active', 'suspended']),
+    accountStatus: z.enum(['pending', 'active', 'suspended', 'deleted']),
+    lastLoginAt: z.string().nullable(),
+    createdAt: z.string(),
+  })
+  .meta({ id: 'Employee' });
+
+export const createEmployeeBody = z.object({
+  username: usernameField,
+  password: z
+    .string()
+    .min(1)
+    .max(200)
+    .meta({ description: 'Held to the same policy as a signup, breach check included (§8.1).' }),
+  name: z.string().trim().max(200).optional(),
+  role: z
+    .string()
+    .min(1)
+    .meta({ description: 'Role key. Must be one you hold yourself, and never `owner`.', example: 'member' }),
+});
+
+export const resetEmployeePasswordBody = z.object({
+  password: z.string().min(1).max(200),
+});
+
+export const setEmployeeStatusBody = z.object({
+  status: z.enum(['active', 'suspended']),
+});

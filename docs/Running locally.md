@@ -101,6 +101,24 @@ pnpm openapi               # write openapi/openapi.json for codegen or a CI diff
   the call times out, the check fails open with a warning, and signup proceeds.
   Set `PASSWORD_BREACH_CHECK=false` to skip it deliberately rather than paying the
   timeout — and read the ⚑ in `.env.example` before you do.
+- **⚑ Open the app at `http://lvh.me:5173`, not `http://localhost:5173`.** Every
+  organization lives at `<slug>.lvh.me:5173`, and the session cookie is issued for
+  the apex so one sign-in works across both. `localhost` cannot do this: it is a
+  reserved TLD, so Chrome downgrades `Domain=localhost` to a host-only cookie
+  *silently* — the sign-in succeeds, the redirect to the workspace happens, and the
+  browser arrives signed out. `lvh.me` is a public domain whose every subdomain
+  resolves to 127.0.0.1, so it needs no hosts file and no DNS of your own. The
+  root domain is the **web app's** setting (`NEXT_PUBLIC_ROOT_DOMAIN`); this API has
+  none, because a tenant reaches it as an explicit `org` field on the login body
+  and never as a host header (§5.3.1). What must agree here is `APP_ORIGIN` and
+  `CORS_ORIGINS`, both `http://lvh.me:5173`.
+- **Logo uploads need MinIO.** `docker compose up -d minio minio-init` creates the
+  bucket; the API refuses nothing without it, but the upload will fail at the
+  point it writes. The console is on `59001`.
+- **Registering a taken address looks like it worked.** By design — [[register]]
+  explains why. Set `REGISTER_REVEAL_EXISTING=true` in `.env` (this checkout does)
+  to get a `409` and an in-app message instead; the flag needs a restart, because
+  env is read once at boot.
 - **Registration is capped at 5 per hour per IP.** Clicking through the signup form
   half a dozen times while testing will earn you a `429` that looks like a bug. Use
   a different address *and* a different client, or wait out the window.

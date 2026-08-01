@@ -21,6 +21,9 @@ in: it links to the sections you actually need and tracks what is built.
 | What "auth" covers here | [[AUTH-MODULE-PLAN#2. Scope map — what "auth" means here]] |
 | The tables and why each column exists | [[AUTH-MODULE-PLAN#4. Data model]] |
 | How login works, end to end | [[AUTH-MODULE-PLAN#5.3 Login (password)]] |
+| Who signs in where, and with what | [[AUTH-MODULE-PLAN#5.3.1 Two doors: email at the apex, username at the tenant]] |
+| Staff accounts, created by the owner | [[AUTH-MODULE-PLAN#10.12 Employee accounts]] |
+| One subdomain per organization | [[AUTH-MODULE-PLAN#10.13 Tenant addressing: one subdomain per organization]] |
 | **How refresh rotation works** | [[AUTH-MODULE-PLAN#5.5 Refresh-token flow (rotation, reuse detection, revocation)]] |
 | Two-factor, trusted devices, step-up | [[AUTH-MODULE-PLAN#5.4 Two-factor authentication (2FA) — full lifecycle]] |
 | Passwordless login by code | [[AUTH-MODULE-PLAN#5.11 Login by one-time passcode (OTP)]] |

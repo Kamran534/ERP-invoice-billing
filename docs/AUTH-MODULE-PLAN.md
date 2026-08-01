@@ -451,6 +451,23 @@ failure modes. `→` marks the response; ⚑ marks a security-critical detail th
 
 Audit: `user.registered`, `email.verification_sent`.
 
+#### 5.1.1 Revealing an existing account (opt-in)
+
+Step 3 above is the default and stays the default. `registration.revealExistingAccount`
+(`REGISTER_REVEAL_EXISTING`, off) lets a deployment trade it away: a taken address then answers
+`409 CONFLICT` with `details.field: "email"`, and **no notice mail is sent** — once the caller is
+told, mailing the account holder stops being a security notice and becomes a message anyone can
+send to any address on demand.
+
+The audit row is written either way, with `reason: email_taken`. The password is still hashed
+before the lookup on both paths, so turning the flag back off restores the timing guarantee
+without touching the use-case.
+
+⚑ On open signup this makes `/auth/register` an oracle for "does this address have an account".
+It is defensible on an invite-only or single-tenant install, where signup is nearly closed and the
+usability cost of the silent path — someone who forgot they signed up, watching an inbox for a
+link that never comes — is paid by every real user. `auditProductionConfig` warns when it is on.
+
 ### 5.2 Email verification
 
 Atomic consume (§4.4) → set `email_verified_at`, `status='active'` → optionally auto-login (issue
@@ -475,6 +492,40 @@ Resend endpoint is rate-limited harder than most (3/hour/account) to prevent mai
 7. Otherwise create session + refresh token + access token → `200 { status: "authenticated", user }`.
 
 Audit: `auth.login_succeeded` / `auth.login_failed` (with reason) / `auth.mfa_challenged`.
+
+#### 5.3.1 Two doors: email at the apex, username at the tenant
+
+An account reaches this system through one of two identities, and they are not interchangeable.
+
+| Identity | Created by | Signs in at | Body |
+|---|---|---|---|
+| **email + password** | self-registration (§5.1) | the apex host, and their **own** tenant host | `{ email, password }` |
+| **username + password** | the owner, from the dashboard (§10.12) | their tenant host only | `{ username, org, password }` |
+
+`org` is the tenant's slug. ⚑ It is an explicit parameter, never inferred from `Host`: this API sits
+behind a BFF, so the `Host` it sees is the proxy's, and a tenant chosen by a header the API cannot
+vouch for is a tenant an attacker can choose. The web app resolves the subdomain and passes it.
+
+Resolution and failure semantics are the ones §5.3 already specifies, with the lookup widened:
+
+1. `org` present → resolve the org by slug. Unknown slug still costs a dummy Argon2 verify and still
+   answers `INVALID_CREDENTIALS`. ⚑ Otherwise the login form becomes a directory of which
+   organizations exist.
+2. `username` → `findByUsernameInOrg(orgId, username)`. Usernames are unique **within** an
+   organization, so a username with no `org` identifies nobody: that request is refused before any
+   lookup, and refused identically to a wrong password.
+3. `email` + `org` → the ordinary email path, plus one check *after* the password verifies: the
+   account must hold the `owner` role in that organization, or the answer is `WRONG_LOGIN_PORTAL`
+   (403).
+
+⚑ On (3), the distinct code is deliberate and is not an oracle worth worrying about: it is only
+reachable by someone who already proved the password. What it prevents is a member invited by email
+being silently stuck on a screen that will never let them in — they are told, in as many words, that
+employees use the username form.
+
+⚑ Employees have no email address at all. They cannot use the apex form, cannot be sent a
+verification or reset link, and cannot become `owner` (§10.12) — an owner without a mailbox has no
+recovery path, and the first forgotten password ends the tenant.
 
 ### 5.4 Two-factor authentication (2FA) — full lifecycle
 
@@ -1268,7 +1319,9 @@ one implicitly means nobody ever decided who owns it.
 | `anyone` | Any verified user who is not already a member of one | Multi-tenant SaaS signup |
 | `never` | Nobody through the API | Orgs provisioned out of band by an operator |
 
-⚑ `first-user` is the default because it fails *closed* on a fresh install: the window in which
+⚑ This product ships `anyone`: everybody who registers by email creates and owns one organization,
+and their staff arrive as employee accounts (§10.12) rather than as registrations. `first-user`
+remains the default in the schema because it fails *closed* on a fresh install: the window in which
 anyone can claim the instance is exactly one org wide, and it shuts the moment the first is created.
 `anyone` is correct for SaaS and wrong for an internal deployment, where it would let any address
 that can receive mail create a tenant.
@@ -1395,6 +1448,96 @@ bookmarked, so changing it is a migration rather than an edit.
 
 ⚑ The audit row records *which* fields changed, never their values. The audit log is not a second
 copy of the database.
+
+#### 10.11.1 The logo, and the only route that takes bytes
+
+`logoUrl` is a URL, not a blob: Postgres stores the address and an object store holds the file.
+`POST /auth/orgs/current/logo` (multipart, `org:update`) accepts one image and returns the updated
+organization; `DELETE` on the same path clears it. MinIO in development, S3 anywhere else — the same
+API, so only the endpoint and the credentials differ.
+
+⚑ Nothing the caller says about the file is believed:
+
+- **The type is sniffed from the leading bytes**, never taken from `Content-Type` or the filename.
+  Both are the uploader's to choose, and the object store will serve back whatever type we record.
+- **SVG is refused outright.** It is a document format that can carry `<script>`, and a browser
+  rendering one from an origin of ours would run it. Accepting SVG turns "upload your logo" into
+  stored XSS; rasterising server-side would be the only safe way to take one.
+- **The key is `public/logos/<orgId>/<uuid>.<ext>`** — random, and namespaced by the organization
+  from the *token*. A filename from a browser can contain `../`, a null byte or four kilobytes of
+  Unicode, and none of that belongs in a key we hand back as a URL.
+- **The size cap is enforced by the parser**, not by measuring the buffer afterwards: `truncated`
+  means a 5 GB upload never becomes a 5 GB buffer.
+- **Only `public/` is anonymously readable.** Logos appear in emails and on invoices, so they must
+  be fetchable without a signature — but a wholly public bucket is one careless write away from
+  leaking whatever else lands in it.
+
+The previous object is deleted *after* the row points at the new one, so a failure leaves an orphan
+rather than an organization whose logo 404s.
+
+⚑ **No body schema on this route.** `schema.body` is what Fastify *validates* against, not merely
+what Swagger renders — and with multipart read through `request.file()`, `request.body` is
+undefined. A body schema there fails every upload with `Request validation failed` before the
+handler runs, which is exactly what it did. `consumes` documents the shape; the bytes are what get
+checked.
+
+`GET /auth/me` carries `logoUrl` alongside the org's name and slug, so a client can draw the mark
+without a second request.
+
+### 10.12 Employee accounts
+
+The people who work *in* an organization do not register. The owner creates them, and what the owner
+creates is a **username identity scoped to that organization**:
+
+```
+auth_users.username        citext, nullable
+auth_users.org_scope_id    uuid  , nullable → auth_orgs(id) on delete cascade
+unique (org_scope_id, username)
+check  ((username IS NULL) = (org_scope_id IS NULL))
+check  (email IS NOT NULL OR username IS NOT NULL)
+```
+
+⚑ The scope column is not redundant with the membership. Uniqueness has to be enforceable by the
+database, and `unique (username)` across the instance would mean the first tenant to take `ahmed`
+takes it from everybody — while a unique index cannot reach through `auth_memberships` to find out
+which org a row belongs to. The two `CHECK`s state the other half: a username with no scope is
+unaddressable, and a row with neither identity can never sign in.
+
+`POST /auth/orgs/current/employees` requires `member:invite` — deliberately the same permission as
+inviting by email, because both answer "may this person add someone to the tenant", and a second
+permission would have to be back-filled into every existing role.
+
+In one transaction: insert the user (`status: 'active'`, no email, password hashed under the same
+policy as §8.1 including the breach check), then the membership with the requested role.
+
+⚑ The invitation subset rule (§10.7) applies unchanged: you cannot create an employee holding a
+role you do not hold yourself. ⚑ And no employee may hold `owner` — enforced in the use-case, not
+merely in the UI. An owner is the account that receives the password-reset mail; an owner without a
+mailbox is a tenant one forgotten password away from needing a DBA.
+
+The owner can reset an employee's password (`POST …/employees/:id/password`) and suspend or restore
+them (`PATCH …/employees/:id`). ⚑ Suspending sets the *membership* status **and** revokes every
+session that employee holds — a suspension that leaves a live access token is a suspension that
+takes effect in ten minutes.
+
+### 10.13 Tenant addressing: one subdomain per organization
+
+`slug` is the subdomain. `acme` is reachable at `acme.<ROOT_DOMAIN>`, and that address is where its
+employees sign in.
+
+⚑ Which makes the slug a DNS label, not a URL segment: `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`,
+63 characters at most, and no leading or trailing hyphen. A slug that is merely URL-safe can be
+un-resolvable, and the failure appears after the tenant exists.
+
+⚑ Reserved slugs are refused (`www`, `api`, `app`, `admin`, `mail`, `auth`, `static`, `cdn`,
+`status`, `docs`, `help`, `support`, `billing`, `dashboard`, `login`, `staging`, `test`, …). Some of
+those hosts are how the product itself is reached and some are how mail for the domain is
+validated; a tenant occupying one is an outage, or worse, a way to receive somebody else's mail.
+
+The API does not resolve tenants from `Host` (see §5.3.1). The **web app** does: its middleware
+reads the browser's host, derives the slug, and hands it to the login action. Session cookies are
+issued for `.<ROOT_DOMAIN>` so one sign-in works across the apex and the tenant host — the session is
+already bound to exactly one organization by §10.10, so sharing the cookie widens nothing.
 
 
 ---

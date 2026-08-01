@@ -43,6 +43,8 @@ export const publicUser = z
     id: uuidField,
     email: emailField.nullable(),
     emailVerified: z.boolean(),
+    /** §10.12 — set for employee accounts, null for everyone who signed up by email. */
+    username: z.string().nullable(),
     name: z.string().nullable(),
     status: z.enum(['pending', 'active', 'suspended']),
     mfaEnrolled: z.boolean().meta({ description: 'True when at least one confirmed second factor exists.' }),
@@ -121,7 +123,30 @@ export const registerResponse = z.object({
 // ── Login ──────────────────────────────────────────────────────────────────
 
 export const loginBody = z.object({
-  email: emailField,
+  /** ⚑ Exactly one of `email` / `username`, enforced by the use-case (§5.3.1). */
+  email: emailField.optional(),
+  username: z
+    .string()
+    .min(1)
+    .max(40)
+    .optional()
+    .meta({
+      description:
+        "An employee's login name (§10.12). Requires `org` — a username is unique only within " +
+        'one organization, so without it the name identifies nobody.',
+      example: 'ahmed.raza',
+    }),
+  org: z
+    .string()
+    .min(1)
+    .max(63)
+    .optional()
+    .meta({
+      description:
+        "The tenant slug, from the subdomain the browser used. ⚑ Passed explicitly and never " +
+        'read from `Host`: this API sits behind a BFF, so its host header belongs to the proxy.',
+      example: 'acme-billing',
+    }),
   password: z.string().min(1).max(200).meta({ description: 'Not length-validated on login — that would leak policy.' }),
   rememberDevice: z
     .boolean()

@@ -13,6 +13,8 @@ export interface PublicUser {
   id: string;
   email: string | null;
   emailVerified: boolean;
+  /** §10.12 — an employee's login name; null for accounts that signed up by email. */
+  username: string | null;
   name: string | null;
   status: 'pending' | 'active' | 'suspended';
   mfaEnrolled: boolean;
@@ -24,6 +26,7 @@ export function presentUser(user: User, mfaEnrolled: boolean): PublicUser {
     id: user.id,
     email: user.email,
     emailVerified: user.emailVerifiedAt !== null,
+    username: user.username,
     // `deleted` is not in the published union, and a deleted user should never
     // reach a serializer anyway — the flows refuse them earlier.
     status: user.status === 'deleted' ? 'suspended' : user.status,

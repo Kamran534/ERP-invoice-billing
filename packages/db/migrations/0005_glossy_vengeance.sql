@@ -1,0 +1,1 @@
+ALTER TABLE "auth_users" DROP CONSTRAINT "ck_users_has_identity";

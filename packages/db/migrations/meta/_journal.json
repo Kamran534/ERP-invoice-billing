@@ -29,6 +29,20 @@
       "when": 1785527645639,
       "tag": "0003_white_thing",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785545872693,
+      "tag": "0004_thick_anita_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785549938410,
+      "tag": "0005_glossy_vengeance",
+      "breakpoints": true
     }
   ]
 }

@@ -191,6 +191,26 @@ export const orgConfigSchema = z.object({
   inviteTtl: dur('7d'),
 });
 
+/** Registration policy (§5.1). */
+export const registrationConfigSchema = z.object({
+  /**
+   * ⚑ Tell the caller when the address already has an account.
+   *
+   * The default is `false`, and that default is the whole of §5.1's enumeration
+   * resistance: a taken address gets the identical body, the identical status and
+   * the identical *timing* as a free one, and the real owner — not the caller —
+   * receives a notice. Turning this on makes `/auth/register` answer "does this
+   * address have an account" to anyone who asks.
+   *
+   * It is offered because that trade is genuinely different per deployment. On an
+   * invite-only internal install, registration is nearly closed and the leak is
+   * small against a real usability cost: someone who has simply forgotten they
+   * signed up is otherwise told to check an inbox for a link that will never
+   * arrive. On a consumer product with open signup, leave it off.
+   */
+  revealExistingAccount: z.boolean().default(false),
+});
+
 export const lockoutConfigSchema = z.object({
   maxFailures: z.number().int().min(3).max(100).default(10),
   lockFor: dur('15m'),
@@ -275,6 +295,7 @@ export const authConfigSchema = z.object({
   }),
   tenancy: z.enum(['none', 'orgs']).default('orgs'),
   orgs: orgConfigSchema.prefault({}),
+  registration: registrationConfigSchema.prefault({}),
   loginMethods: z
     .array(z.enum(['password', 'otp', 'magic_link', 'oauth', 'passkey']))
     .default(['password', 'otp']),
@@ -362,6 +383,11 @@ export function auditProductionConfig(config: AuthConfig): string[] {
   }
   if (!config.urls.appOrigin.startsWith('https://')) {
     problems.push('urls.appOrigin is not https — emailed links would be downgradeable');
+  }
+  if (config.registration.revealExistingAccount) {
+    problems.push(
+      'registration.revealExistingAccount is true — /auth/register tells any caller whether an address already has an account (§5.1)',
+    );
   }
   if (config.tenancy === 'orgs' && config.orgs.selfService === 'anyone') {
     problems.push(

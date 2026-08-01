@@ -36,23 +36,158 @@ const PAGE_CSP = [
 ].join('; ');
 
 const STYLE = `
-  :root { color-scheme: light dark; }
+  /*
+   * Deliberately self-contained: no stylesheet, no font file, no image. This page
+   * is reached from an email, often on a phone, sometimes through a corporate
+   * proxy that strips half of everything — every request it needs is a request
+   * that can fail in front of someone who is only trying to confirm an address.
+   *
+   * The palette matches the web app's brand (#0744c6, sampled from the mark), so
+   * the two do not look like different products when someone meets this fallback.
+   */
+  :root {
+    color-scheme: light dark;
+    --canvas: #f9fafb;
+    --surface: #fff;
+    --content: #171a20;
+    --muted: #5c6371;
+    --subtle: #8a90a0;
+    --line: #e6e8ec;
+    --brand: #0744c6;
+    --brand-hover: #05379e;
+    --brand-subtle: #eef2ff;
+    --ok: #2f7d4f;
+    --ok-subtle: #e8f6ee;
+    --bad: #c0392b;
+    --bad-subtle: #fdeceb;
+    --shadow: 0 1px 3px rgb(23 26 32 / 0.07), 0 8px 24px rgb(23 26 32 / 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --canvas: #101216;
+      --surface: #171a20;
+      --content: #eceef2;
+      --muted: #9aa1b0;
+      --subtle: #6d7484;
+      --line: #262a33;
+      /* ⚑ A step lighter in the dark. The same blue that reads as confident on
+         white reads as muddy on near-black — equal hex is not equal contrast. */
+      --brand: #5b7cf5;
+      --brand-hover: #7a94f8;
+      --brand-subtle: #1b2140;
+      --ok: #57b97e;
+      --ok-subtle: #16281e;
+      --bad: #f0715f;
+      --bad-subtle: #2a1715;
+      --shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
   body {
-    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-    max-width: 34rem; margin: 12vh auto; padding: 0 1.5rem;
+    margin: 0;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 2rem 1.25rem;
+    background: var(--canvas);
+    color: var(--content);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
-  p { margin: 0 0 1rem; color: #555; }
-  @media (prefers-color-scheme: dark) { body { background: #16181d; color: #e8eaed; } p { color: #a8adb8; } }
-  button {
-    font: inherit; padding: .7rem 1.4rem; border: 0; border-radius: .4rem;
-    background: #2f6feb; color: #fff; cursor: pointer;
+
+  .card {
+    width: 100%;
+    max-width: 27rem;
+    background: var(--surface);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 2rem;
+    text-align: center;
   }
-  .bad { color: #c0392b; }
-  @media (prefers-color-scheme: dark) { .bad { color: #ff6b5a; } }
+
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: .55rem;
+    margin-bottom: 1.75rem;
+    font-weight: 600;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    font-size: .8125rem;
+    color: var(--content);
+  }
+  .mark span.dot {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: var(--brand);
+    display: inline-block;
+  }
+
+  .badge {
+    width: 44px; height: 44px; border-radius: 12px;
+    display: grid; place-items: center;
+    margin: 0 auto 1.25rem;
+    font-size: 20px; line-height: 1;
+  }
+  .badge.ok  { background: var(--ok-subtle);  color: var(--ok); }
+  .badge.bad { background: var(--bad-subtle); color: var(--bad); }
+
+  h1 {
+    font-size: 1.375rem;
+    line-height: 1.3;
+    letter-spacing: -.02em;
+    margin: 0 0 .5rem;
+    font-weight: 600;
+  }
+  p { margin: 0; color: var(--muted); }
+  p + p { margin-top: .75rem; }
+
+  form { margin-top: 1.75rem; }
+
+  button, .link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 42px;
+    padding: 0 1.25rem;
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    background: var(--brand);
+    color: #fff;
+    transition: background-color .12s ease;
+  }
+  button:hover, .link:hover { background: var(--brand-hover); }
+  /* ⚑ Never removed. A focus ring is the only thing a keyboard user has. */
+  button:focus-visible, .link:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
+  .foot {
+    margin-top: 1.5rem;
+    font-size: .8125rem;
+    color: var(--subtle);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: .01ms !important; }
+  }
 `;
 
-function page(reply: FastifyReply, status: number, title: string, body: string): FastifyReply {
+function page(
+  reply: FastifyReply,
+  status: number,
+  title: string,
+  body: string,
+  appName: string,
+): FastifyReply {
   return reply
     .code(status)
     .header('content-type', 'text/html; charset=utf-8')
@@ -63,7 +198,11 @@ function page(reply: FastifyReply, status: number, title: string, body: string):
         // ⚑ Mail clients and scanners follow links; nothing here should be indexed
         // or kept in a shared cache, since the URL carries a live token.
         `<meta name="robots" content="noindex,nofollow">` +
-        `<title>${title}</title><style>${STYLE}</style></head><body>${body}</body></html>`,
+        `<meta name="color-scheme" content="light dark">` +
+        `<title>${escape(title)} · ${escape(appName)}</title>` +
+        `<style>${STYLE}</style></head><body><main class="card">` +
+        `<p class="mark"><span class="dot"></span>${escape(appName)}</p>` +
+        `${body}</main></body></html>`,
     );
 }
 
@@ -85,6 +224,17 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   );
 
   const verifyPath = app.auth.config.urls.verifyPath;
+  const appName = app.auth.config.appName;
+
+  /**
+   * Where to send someone afterwards.
+   *
+   * ⚑ `appOrigin` is where the front end lives — the same value every emailed
+   * link is built from. When it points elsewhere (the normal case once a front
+   * end exists) "sign in" should take people there rather than leaving them on an
+   * API page with nowhere to go.
+   */
+  const signInUrl = `${app.auth.config.urls.appOrigin}/login`;
 
   app.get(
     verifyPath,
@@ -98,9 +248,12 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
           reply,
           400,
           'Link incomplete',
-          `<h1 class="bad">That link is incomplete</h1>` +
+          `<div class="badge bad">!</div>` +
+            `<h1>That link is incomplete</h1>` +
             `<p>It is missing its confirmation code. Copy the whole link out of the ` +
-            `email — some mail clients cut long links in half.</p>`,
+            `email — some mail clients cut long links in half.</p>` +
+            `<p class="foot"><a class="link" href="${escape(signInUrl)}">Go to sign in</a></p>`,
+          appName,
         );
       }
 
@@ -109,11 +262,13 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
         200,
         'Confirm your email',
         `<h1>Confirm your email address</h1>` +
-          `<p>One more step to finish setting up your ${escape(app.auth.config.appName)} account.</p>` +
+          `<p>One more step to finish setting up your ${escape(appName)} account.</p>` +
           `<form method="post" action="${escape(verifyPath)}">` +
           `<input type="hidden" name="token" value="${escape(token)}">` +
           `<button type="submit">Confirm my email</button>` +
-          `</form>`,
+          `</form>` +
+          `<p class="foot">This link expires 24 hours after it was sent, and works once.</p>`,
+        appName,
       );
     },
   );
@@ -138,9 +293,12 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
             reply,
             error.status,
             'Link no longer valid',
-            `<h1 class="bad">That link is no longer valid</h1>` +
+            `<div class="badge bad">!</div>` +
+              `<h1>That link is no longer valid</h1>` +
               `<p>Confirmation links expire after 24 hours and work only once. ` +
-              `Ask for a new one from the sign-in screen.</p>`,
+              `Ask for a new one from the sign-in screen.</p>` +
+              `<p class="foot"><a class="link" href="${escape(signInUrl)}">Go to sign in</a></p>`,
+            appName,
           );
         }
         throw error;
@@ -150,8 +308,11 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
         reply,
         200,
         'Email confirmed',
-        `<h1>Email confirmed</h1>` +
-          `<p>Your account is active. You can close this tab and sign in.</p>`,
+        `<div class="badge ok">✓</div>` +
+          `<h1>Email confirmed</h1>` +
+          `<p>Your account is active. Sign in to finish setting up your organization.</p>` +
+          `<p class="foot"><a class="link" href="${escape(signInUrl)}">Go to sign in</a></p>`,
+        appName,
       );
     },
   );

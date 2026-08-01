@@ -53,6 +53,8 @@ export const AUTH_ERROR_CODES = {
 
   // ── authorization (§10) ──────────────────────────────────────────────────
   PERMISSION_DENIED: 403,
+  /** §5.3.1 — right credentials, wrong door: email login on someone else's tenant. */
+  WRONG_LOGIN_PORTAL: 403,
   ORG_CONTEXT_REQUIRED: 400,
 
   // ── generic ──────────────────────────────────────────────────────────────

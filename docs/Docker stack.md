@@ -52,6 +52,28 @@ Accepts everything, delivers nothing outside the machine. Its REST API is what
 makes mail assertable: [[Testing#Integration]] sends a real message and reads it
 back to confirm the code never reached the subject line.
 
+## MinIO, and the two URLs it needs
+
+Object storage for organization logos (§10.11.1). MinIO speaks the S3 API, so the
+application code cannot tell the difference — in production only the endpoint and
+the credentials change.
+
+`minio-init` is a one-shot `mc` container that creates the bucket and runs
+`anonymous set download` on **`public/` only**. ⚑ Not on the bucket: logos have to
+be fetchable without a signature because they appear in emails and on invoices,
+but a wholly public bucket is one careless `putObject` away from serving whatever
+else lands in it.
+
+⚑ Two URLs, and they are not the same string. `S3_ENDPOINT` is where the API
+*writes* — inside the compose network that is `minio:9000`. `S3_PUBLIC_URL` is what
+a **browser** fetches, which from the host is `localhost:59000` and in production is
+likely a CDN. Storing the private one puts an unreachable address on every invoice.
+
+| | |
+|---|---|
+| API | `${MINIO_PORT:-59000}` |
+| Console | `${MINIO_CONSOLE_PORT:-59001}` — sign in with `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` |
+
 ## The API image
 
 Multi-stage, in `docker/api.Dockerfile`:

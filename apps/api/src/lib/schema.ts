@@ -109,6 +109,14 @@ export interface RouteSchemaInput {
   security?: Array<Record<string, string[]>>;
   /** Documented rate limit, rendered into the description so it is discoverable. */
   rateLimit?: string;
+  /**
+   * Request content types, for the one route that does not take JSON.
+   *
+   * ⚑ Documentation only. Fastify decides what it can parse from its registered
+   * content-type parsers; this is what Swagger UI needs to render a file picker
+   * instead of a JSON textarea.
+   */
+  consumes?: string[];
   deprecated?: boolean;
 }
 
@@ -157,6 +165,7 @@ export function route(input: RouteSchemaInput): Record<string, unknown> {
     operationId: input.operationId,
     ...(input.deprecated ? { deprecated: true } : {}),
     ...(input.security ? { security: input.security } : {}),
+    ...(input.consumes ? { consumes: input.consumes } : {}),
     ...(input.body ? { body: toJson(input.body, 'input') } : {}),
     ...(input.querystring ? { querystring: toJson(input.querystring, 'input') } : {}),
     ...(input.params ? { params: toJson(input.params, 'input') } : {}),

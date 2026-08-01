@@ -2,7 +2,7 @@
  * User and audit repositories (AUTH-MODULE-PLAN.md §4.1, §4.7).
  */
 
-import { eq, lt, sql } from 'drizzle-orm';
+import { and, eq, lt, sql } from 'drizzle-orm';
 import type { AuditEvent, AuditRepo, User, UserId, UserRepo } from '@auth/core';
 import type { Database } from '../pool.js';
 import type { RepoDeps } from './deps.js';
@@ -10,10 +10,13 @@ import { auditEvents, loginAttempts, passwordHistory, users } from '../schema.js
 
 type Row = typeof users.$inferSelect;
 
-const toUser = (row: Row): User => ({
+/** Shared with `repos/orgs.ts`, which creates employee rows in its own transaction. */
+export const toUser = (row: Row): User => ({
   id: row.id,
   email: row.email,
   emailVerifiedAt: row.emailVerifiedAt,
+  username: row.username,
+  orgScopeId: row.orgScopeId,
   phone: row.phone,
   phoneVerifiedAt: row.phoneVerifiedAt,
   passwordHash: row.passwordHash,
@@ -50,12 +53,25 @@ export function createUserRepo(db: Database, deps: RepoDeps): ExtendedUserRepo {
       return row ? toUser(row) : null;
     },
 
+    async findByUsernameInOrg(orgId, username) {
+      // ⚑ Both predicates. `username` is citext so the comparison folds case, but
+      // the org is what makes the answer unique — the same name legitimately
+      // exists in every other tenant.
+      const [row] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.orgScopeId, orgId), eq(users.username, username.trim())));
+      return row ? toUser(row) : null;
+    },
+
     async create(input) {
       const [row] = await db
         .insert(users)
         .values({
           id: deps.uuid(),
-          email: input.email.trim(),
+          email: input.email?.trim() ?? null,
+          username: input.username ?? null,
+          orgScopeId: input.orgScopeId ?? null,
           name: input.name ?? null,
           passwordHash: input.passwordHash ?? null,
           passwordAlgo: input.passwordAlgo ?? null,

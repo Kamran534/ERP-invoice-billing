@@ -41,6 +41,11 @@ beforeAll(async () => {
       // suite makes claims about has to be stated here.
       COOKIE_MODE: 'cookie',
       HTTPS_ENABLED: 'false',
+      // ⚑ Pinned for the same reason as COOKIE_MODE: "answers a taken address
+      // identically" below is an assertion about the default, and a developer
+      // turning the reveal on in `.env` would otherwise turn that test red with
+      // no hint that the product is behaving as configured.
+      REGISTER_REVEAL_EXISTING: 'false',
       // ⚑ The throwaway database, when one is configured. e2e does not truncate,
       // but it does create accounts on every run, and they have no business
       // accumulating in the database someone is developing against.
@@ -237,6 +242,54 @@ describe('signing up', () => {
 
     expect(second.statusCode).toBe(first.statusCode);
     expect(second.payload).toBe(first.payload);
+  });
+
+  it('says so outright when the deployment asks it to', async () => {
+    // Its own instance: the guarantee above is the default, and this is the
+    // deployment that has explicitly traded it away (§5.1, REGISTER_REVEAL_EXISTING).
+    const instance = await buildApp(
+      loadEnv({
+        ...process.env,
+        NODE_ENV: 'test',
+        COOKIE_MODE: 'cookie',
+        HTTPS_ENABLED: 'false',
+        LOG_LEVEL: 'silent',
+        SWAGGER_ENABLED: 'false',
+        REGISTER_REVEAL_EXISTING: 'true',
+        REDIS_KEY_PREFIX: `e2e-reveal-${Date.now()}:`,
+        MAX_EVENT_LOOP_DELAY_MS: '60000',
+        MAX_HEAP_USED_BYTES: String(8 * 1024 ** 3),
+        MAX_RSS_BYTES: String(8 * 1024 ** 3),
+        DB_CONNECT_TIMEOUT_MS: '30000',
+        REDIS_COMMAND_TIMEOUT_MS: '10000',
+        ...(process.env['TEST_DATABASE_URL']
+          ? { DATABASE_URL: process.env['TEST_DATABASE_URL'] }
+          : {}),
+      } as NodeJS.ProcessEnv),
+    );
+
+    try {
+      const email = freshEmail();
+      const first = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/register',
+        payload: { email, password: PASSWORD },
+      });
+      expect(first.statusCode, first.payload).toBe(202);
+
+      const second = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/register',
+        payload: { email, password: PASSWORD },
+      });
+
+      expect(second.statusCode).toBe(409);
+      expect(json<{ error: { code: string } }>(second).error.code).toBe('CONFLICT');
+    } finally {
+      await instance.close();
+    }
   });
 
   it('refuses a password below the minimum length', async () => {
@@ -1169,6 +1222,11 @@ describe('organizations', () => {
         LOG_LEVEL: 'silent',
         SWAGGER_ENABLED: 'false',
         ORG_SELF_SERVICE: selfService,
+        // ⚑ Pinned like COOKIE_MODE above: `onboard` re-registers an address on
+        // purpose to collect a fresh token, and with the reveal on that is a 409.
+        // These tests make no claims about registration; inheriting a developer's
+        // `.env` here is exactly the trap the comment in `beforeAll` describes.
+        REGISTER_REVEAL_EXISTING: 'false',
         REDIS_KEY_PREFIX: `e2e-org-${Date.now()}-${Math.random()}:`,
         MAX_EVENT_LOOP_DELAY_MS: '60000',
         MAX_HEAP_USED_BYTES: String(8 * 1024 ** 3),
@@ -1197,7 +1255,10 @@ describe('organizations', () => {
       url: '/auth/register',
       payload: { email, password: PASSWORD },
     });
-    expect(reg.statusCode, reg.payload).toBe(202);
+    // 409 when the caller passed an address that already exists — this helper is
+    // also how a test re-authenticates someone, and "already registered" is a
+    // perfectly good state to sign in from.
+    expect([202, 409], reg.payload).toContain(reg.statusCode);
 
     const token = (await mailpitFind(email)).Text.match(/token=([^\s&]+)/)?.[1];
     await instance.inject({
@@ -1217,6 +1278,120 @@ describe('organizations', () => {
     const body = json<{ session: { accessToken: string } }>(login);
     return { email, bearer: { authorization: `Bearer ${body.session.accessToken}` } };
   }
+
+  /**
+   * §10.12 / §5.3.1 — the shape this product is actually built around: one owner
+   * who registered by email, and staff who never register at all.
+   */
+  it('an owner hires an employee, who signs in at the tenant address', async () => {
+    const instance = await freshInstance('anyone');
+    try {
+      const owner = await onboard(instance);
+      const created = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/orgs',
+        headers: owner.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+      expect(created.statusCode, created.payload).toBe(201);
+      const { org, accessToken } = json<{ org: { slug: string }; accessToken: string }>(created);
+      const ownerAuth = { authorization: `Bearer ${accessToken}` };
+
+      const hire = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/orgs/current/employees',
+        headers: ownerAuth,
+        payload: { username: 'ahmed.raza', password: PASSWORD, name: 'Ahmed Raza', role: 'member' },
+      });
+      expect(hire.statusCode, hire.payload).toBe(201);
+      const employee = json<{ userId: string; username: string }>(hire);
+      expect(employee.username).toBe('ahmed.raza');
+
+      // The door that works: username + the tenant slug the subdomain resolved to.
+      const signIn = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/login',
+        payload: { username: 'ahmed.raza', org: org.slug, password: PASSWORD },
+      });
+      expect(signIn.statusCode, signIn.payload).toBe(200);
+
+      // ⚑ And the doors that do not. A username with no tenant identifies nobody,
+      // and a wrong tenant must be indistinguishable from a wrong password.
+      const noOrg = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/login',
+        payload: { username: 'ahmed.raza', password: PASSWORD },
+      });
+      expect(noOrg.statusCode).toBe(401);
+      expect(json<{ error: { code: string } }>(noOrg).error.code).toBe('INVALID_CREDENTIALS');
+
+      // ⚑ The employee never got an email address, so nothing about them is
+      // reachable through the apex form or through a reset link.
+      const me = json<{ user: { email: string | null } }>(
+        await instance.inject({
+          method: 'GET',
+          url: '/auth/me',
+          headers: { authorization: `Bearer ${json<{ session: { accessToken: string } }>(signIn).session.accessToken}` },
+        }),
+      );
+      expect(me.user.email).toBeNull();
+
+      // Suspend, and the account stops working immediately.
+      const suspend = await instance.inject({
+        method: 'PATCH',
+        remoteAddress: clientIp,
+        url: `/auth/orgs/current/employees/${employee.userId}`,
+        headers: ownerAuth,
+        payload: { status: 'suspended' },
+      });
+      expect(suspend.statusCode, suspend.payload).toBe(200);
+
+      const afterSuspend = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/login',
+        payload: { username: 'ahmed.raza', org: org.slug, password: PASSWORD },
+      });
+      expect(afterSuspend.statusCode).toBe(403);
+      expect(json<{ error: { code: string } }>(afterSuspend).error.code).toBe('ACCOUNT_SUSPENDED');
+    } finally {
+      await instance.close();
+    }
+  });
+
+  it('⚑ refuses an email account at a tenant it does not own', async () => {
+    const instance = await freshInstance('anyone');
+    try {
+      const owner = await onboard(instance);
+      const created = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/orgs',
+        headers: owner.bearer,
+        payload: { name: 'Acme Billing' },
+      });
+      const { org } = json<{ org: { slug: string } }>(created);
+
+      const stranger = await onboard(instance);
+      const attempt = await instance.inject({
+        method: 'POST',
+        remoteAddress: clientIp,
+        url: '/auth/login',
+        payload: { email: stranger.email, org: org.slug, password: PASSWORD },
+      });
+
+      // Correct password, wrong door. Told plainly rather than left guessing —
+      // it is only reachable by someone who already proved the credential.
+      expect(attempt.statusCode).toBe(403);
+      expect(json<{ error: { code: string } }>(attempt).error.code).toBe('WRONG_LOGIN_PORTAL');
+    } finally {
+      await instance.close();
+    }
+  });
 
   it('⚑ reports the organization immediately, and flags the stale token', async () => {
     const instance = await freshInstance();

@@ -65,6 +65,7 @@ export function buildAuthConfig(env: Env): AuthConfig {
       secure: env.HTTPS_ENABLED,
     },
     orgs: { selfService: env.ORG_SELF_SERVICE },
+    registration: { revealExistingAccount: env.REGISTER_REVEAL_EXISTING },
     password: { checkBreached: env.PASSWORD_BREACH_CHECK },
     mfa: {
       enabled: env.MFA_ENABLED,

@@ -16,6 +16,7 @@ import { authPlugin } from './plugins/auth.js';
 import { csrfPlugin } from './plugins/csrf.js';
 import { observabilityPlugin } from './plugins/observability.js';
 import { swaggerPlugin } from './plugins/swagger.js';
+import multipart from '@fastify/multipart';
 import { errorsPlugin } from './plugins/errors.js';
 import { rootRoutes } from './routes/root.js';
 import { healthRoutes } from './routes/health.js';
@@ -24,6 +25,8 @@ import { sessionRoutes } from './routes/auth/session.js';
 import { pageRoutes } from './routes/pages.js';
 import { otpRoutes } from './routes/auth/otp.js';
 import { orgRoutes } from './routes/auth/orgs.js';
+import { employeeRoutes } from './routes/auth/employees.js';
+import { logoRoutes } from './routes/auth/logo.js';
 
 export interface BuildAppOptions {
   /**
@@ -127,6 +130,17 @@ export async function buildApp(
   await app.register(securityPlugin, { env });
   await app.register(authPlugin);
   await app.register(csrfPlugin);
+  /**
+   * ⚑ One route uses this: the logo upload. Registered globally because Fastify
+   * content-type parsers are per-instance, and scoped registration inside a route
+   * file would make `request.file()` silently undefined on a route that looks
+   * like it should have it.
+   *
+   * The limits here are a backstop; the route sets its own from `UPLOAD_MAX_BYTES`.
+   */
+  await app.register(multipart, {
+    limits: { fileSize: env.UPLOAD_MAX_BYTES, files: 1, fields: 4 },
+  });
   await app.register(observabilityPlugin, { env });
   await app.register(swaggerPlugin, { env });
 
@@ -136,6 +150,8 @@ export async function buildApp(
   await app.register(sessionRoutes);
   await app.register(otpRoutes);
   await app.register(orgRoutes);
+  await app.register(employeeRoutes);
+  await app.register(logoRoutes);
 
   // HTML pages so emailed links are clickable without a front-end running.
   await app.register(pageRoutes);

@@ -135,14 +135,17 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         description:
           'Creates a pending account and emails a verification link. No session is issued until ' +
           'the address is verified.\n\n' +
-          '⚑ **Enumeration-safe:** if the address is already registered, the response is identical ' +
-          'to a successful signup and a "someone tried to register with your email" notice goes to ' +
-          'the existing owner. Never treat a 202 as proof the account is new.',
+          '⚑ **Enumeration-safe by default:** if the address is already registered, the response is ' +
+          'identical to a successful signup and a "someone tried to register with your email" notice ' +
+          'goes to the existing owner. Never treat a 202 as proof the account is new.\n\n' +
+          'A deployment may trade that away (`REGISTER_REVEAL_EXISTING`, §5.1), in which case a taken ' +
+          'address answers `409 CONFLICT` with `details.field: "email"` and no notice is mailed. ' +
+          'Clients should handle both: the 409 is the only shape that differs.',
         tags: [TAGS.auth],
         operationId: 'register',
         rateLimit: '5 per hour per IP',
         body: registerBody,
-        response: { 202: registerResponse, 422: errorSchema },
+        response: { 202: registerResponse, 409: errorSchema, 422: errorSchema },
       }),
     },
     async (request, reply) => {
@@ -243,9 +246,18 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       }),
     },
     async (request, reply) => {
-      const body = request.body as { email: string; password: string; rememberDevice?: boolean };
+      const body = request.body as {
+        email?: string;
+        username?: string;
+        org?: string;
+        password: string;
+        rememberDevice?: boolean;
+      };
       const result = await login(auth, authDeps, {
-        email: body.email,
+        email: body.email ?? null,
+        username: body.username ?? null,
+        // ⚑ From the body, never from `request.headers.host` — see §5.3.1.
+        org: body.org ?? null,
         password: body.password,
         trustedDeviceToken: request.cookies[auth.config.cookies.names.trustedDevice] ?? null,
         ...requestContext(request),
@@ -436,7 +448,22 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         response: {
           200: z.object({
             user: publicUser,
-            org: z.object({ id: uuidField, name: z.string(), role: z.string() }).nullable(),
+            org: z
+              .object({
+                id: uuidField,
+                name: z.string(),
+                /**
+                 * ⚑ The subdomain this organization lives at (§10.13). Clients need
+                 * it to build the workspace address, and an owner signing in at the
+                 * apex is sent there — without it the front end would have to guess
+                 * the slug from the name and would eventually guess wrong.
+                 */
+                slug: z.string(),
+                /** So a client can render the mark without a second request. */
+                logoUrl: z.string().nullable(),
+                role: z.string(),
+              })
+              .nullable(),
             permissions: z.array(z.string()),
             staleToken: z.boolean().meta({
               description:
@@ -481,7 +508,13 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       return {
         user: presentUser(user, factors.length > 0),
         org: membership
-          ? { id: membership.org.id, name: membership.org.name, role: membership.role.key }
+          ? {
+              id: membership.org.id,
+              name: membership.org.name,
+              slug: membership.org.slug,
+              logoUrl: membership.org.logoUrl,
+              role: membership.role.key,
+            }
           : null,
         permissions,
         staleToken: (claims.org ?? null) !== (membership?.org.id ?? null),

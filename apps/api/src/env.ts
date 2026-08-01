@@ -105,6 +105,17 @@ export const envSchema = z.object({
    *
    * ⚑ `first-user` is the default because it fails closed on a fresh install.
    */
+  /**
+   * ⚑ Tell the caller when an email address already has an account.
+   *
+   * Off by default, and that default is the enumeration guarantee: a taken
+   * address gets the identical response to a free one, and the real owner is
+   * notified by email instead. On means /auth/register answers "does this address
+   * have an account" to anyone who asks — a reasonable trade on an invite-only
+   * install, a bad one on open signup.
+   */
+  REGISTER_REVEAL_EXISTING: bool.default(false),
+
   ORG_SELF_SERVICE: z.enum(['first-user', 'anyone', 'never']).default('first-user'),
 
   MFA_ENABLED: bool.default(true),
@@ -151,6 +162,24 @@ export const envSchema = z.object({
   BODY_LIMIT_BYTES: int(65_536),
   REQUEST_TIMEOUT_MS: int(10_000),
   SHUTDOWN_TIMEOUT_MS: int(15_000),
+
+  // ── Object storage (§10.11) ───────────────────────────────────────────────
+  // Organization logos live here; Postgres keeps only the URL.
+  S3_ENDPOINT: z.string().url().default('http://localhost:59000'),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_BUCKET: z.string().default('billing'),
+  S3_ACCESS_KEY_ID: z.string().default('billing_dev'),
+  S3_SECRET_ACCESS_KEY: z.string().default('billing_dev_password'),
+  /**
+   * ⚑ The base a *browser* uses, which is not always the endpoint this process
+   * writes to. In production the API may reach S3 over a private network while
+   * the public URL is a CDN; storing the private one would put an unreachable
+   * address on every invoice.
+   */
+  S3_PUBLIC_URL: z.string().url().default('http://localhost:59000/billing'),
+  S3_FORCE_PATH_STYLE: bool.default(true),
+  /** Bytes. A logo larger than this is a mistake, not a design choice. */
+  UPLOAD_MAX_BYTES: int(2 * 1024 * 1024),
 
   // ── Docs ──────────────────────────────────────────────────────────────────
   SWAGGER_ENABLED: bool.default(true),

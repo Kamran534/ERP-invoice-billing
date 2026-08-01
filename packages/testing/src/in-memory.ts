@@ -124,11 +124,24 @@ export function createInMemoryUserRepo(clock: Clock = realClock): UserRepo & { a
       return [...byId.values()].find((u) => u.email?.toLowerCase() === wanted) ?? null;
     },
 
+    async findByUsernameInOrg(orgId, username) {
+      const wanted = username.trim().toLowerCase();
+      // ⚑ Scoped, like the unique index. A double that matched on username alone
+      // would let a test pass on behaviour the database refuses.
+      return (
+        [...byId.values()].find(
+          (u) => u.orgScopeId === orgId && u.username?.toLowerCase() === wanted,
+        ) ?? null
+      );
+    },
+
     async create(input) {
       const user: User = {
         id: input.id ?? `user-${(seq += 1)}`,
-        email: input.email,
+        email: input.email ?? null,
         emailVerifiedAt: input.emailVerifiedAt ?? null,
+        username: input.username ?? null,
+        orgScopeId: input.orgScopeId ?? null,
         phone: input.phone ?? null,
         phoneVerifiedAt: null,
         passwordHash: input.passwordHash ?? null,
@@ -588,7 +601,16 @@ export function createInMemoryTrustedDeviceRepo(clock: Clock = realClock): Trust
  * insert fails" is a decision — a double that leaves a half-built org would let a
  * test pass on behaviour Postgres would never produce.
  */
-export function createInMemoryOrgRepos(clock: Clock = realClock): {
+export function createInMemoryOrgRepos(
+  clock: Clock = realClock,
+  /**
+   * ⚑ The user store, when employee creation is exercised (§10.12). Passed in
+   * rather than kept locally because the real `createEmployee` writes a user row
+   * and a membership row in one transaction, and a double that invented its own
+   * user store would let `findByUsernameInOrg` disagree with what was created.
+   */
+  userRepo?: UserRepo,
+): {
   orgs: OrgRepo;
   memberships: MembershipRepo;
   roles: RoleRepo;
@@ -662,6 +684,33 @@ export function createInMemoryOrgRepos(clock: Clock = realClock): {
         };
         membershipRows.set(membership.id, membership);
         return { org, membership };
+      },
+
+      async createEmployee(input) {
+        if (!userRepo) throw new Error('createInMemoryOrgRepos: no user repo was provided');
+
+        const clash = await userRepo.findByUsernameInOrg(input.orgId, input.username);
+        if (clash) return { conflict: 'username_taken' };
+
+        const user = await userRepo.create({
+          username: input.username,
+          orgScopeId: input.orgId,
+          name: input.name ?? null,
+          passwordHash: input.passwordHash,
+          passwordAlgo: 'argon2id',
+          status: 'active',
+        });
+
+        const membership: Membership = {
+          id: `membership-${(seq += 1)}`,
+          orgId: input.orgId,
+          userId: user.id,
+          roleId: input.roleId,
+          status: 'active',
+          joinedAt: clock.now(),
+        };
+        membershipRows.set(membership.id, membership);
+        return { user, membership };
       },
 
       async findById(id) {
@@ -963,15 +1012,16 @@ export interface InMemoryRepos {
 }
 
 export function createInMemoryRepos(clock: Clock = realClock): InMemoryRepos {
+  const users = createInMemoryUserRepo(clock);
   return {
-    users: createInMemoryUserRepo(clock),
+    users,
     sessions: createInMemorySessionRepo(clock),
     refreshTokens: createInMemoryRefreshTokenRepo(clock),
     oneTimeTokens: createInMemoryOneTimeTokenRepo(clock),
     otpChallenges: createInMemoryOtpChallengeRepo(clock),
     mfa: createInMemoryMfaRepo(clock),
     trustedDevices: createInMemoryTrustedDeviceRepo(clock),
-    ...createInMemoryOrgRepos(clock),
+    ...createInMemoryOrgRepos(clock, users),
     audit: createRecordingAuditRepo(),
   };
 }

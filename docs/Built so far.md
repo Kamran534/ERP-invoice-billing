@@ -81,7 +81,7 @@ All in `packages/core/src/use-cases/`, all unit-tested against in-memory ports.
 | `register` | §5.1 | ⚑ Hashes *before* the user lookup and on both branches, so "already registered" is not faster to detect. Mails the real owner instead of telling the caller. |
 | `verifyEmail` | §5.2 | Atomic consume; promotes `pending`→`active` only, so verification can never undo a suspension |
 | `resendVerification` | §5.2 | Always reports success; invalidates outstanding links so only the newest works |
-| `login` | §5.3 | Dummy verify on the unknown-user, no-password and deleted paths; atomic lockout; lazy rehash that does **not** touch `passwordUpdatedAt` |
+| `login` | §5.3, §5.3.1 | Dummy verify on the unknown-user, no-password and deleted paths; atomic lockout; lazy rehash that does **not** touch `passwordUpdatedAt`. Takes **either** an email or a `username` + `org`, and an unknown tenant costs the same Argon2 verify as a wrong password |
 | `rotateRefreshToken` | §5.5.3 | Rotation with reuse detection, and the recency rule from [[ADR-0009 Decide refresh-token theft on recency, not on read ordering]] |
 | `issueSession` | §5.5.2 | The single place a session is created, so the absolute cap is set identically whichever door the user came through |
 | `logout` / `logoutAll` | §5.6 | Idempotent and silent; logout-all also kills trusted devices |
@@ -95,6 +95,10 @@ All in `packages/core/src/use-cases/`, all unit-tested against in-memory ports.
 | `inviteMember` / `acceptInvite` | §5.14 | ⚑ You may only grant a role you hold, re-checked at acceptance so a demoted inviter cannot still hand it out |
 | `changeMemberRole` / `removeMember` | §10.7 | ⚑ Refuses to leave an org without an active owner |
 | `updateOrganization` | §10.11 | Optional profile — address, tax id, logo, currency. ⚑ An absent field is left alone; `null` clears it |
+| logo upload | §10.11.1 | ⚑ The only route that takes bytes: type sniffed from the file itself, SVG refused, random key namespaced by org, size capped by the parser rather than measured after the fact |
+| `createEmployee` | §10.12 | ⚑ A username scoped to one org, no mailbox, same password policy as a signup. Refuses `owner`, and refuses any role the creator does not hold |
+| `resetEmployeePassword` / `setEmployeeStatus` | §10.12 | ⚑ Both revoke every session the employee holds — a reset that leaves them alive is a second password, and a suspension that does is a suspension in ten minutes' time |
+| `listEmployees` | §10.12 | Username accounts only; email members belong to the members endpoint |
 
 Login also branches correctly into 2FA: it issues a client-bound challenge token
 that carries no `sid` and no permissions (§5.4.2), honours a trusted-device cookie

@@ -19,6 +19,7 @@ import type {
 } from '@auth/core';
 import type { Database } from '../pool.js';
 import type { RepoDeps } from './deps.js';
+import { toUser } from './users.js';
 import { memberships, orgs, rolePermissions, roles, users } from '../schema.js';
 
 /**
@@ -57,6 +58,11 @@ const toRole = (row: RoleRow): Role => ({
   name: row.name,
   isSystem: row.isSystem,
 });
+
+/** Postgres `unique_violation`. Driver-shaped, so it is checked defensively. */
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+}
 
 const toMembership = (row: MembershipRow): Membership => ({
   id: row.id,
@@ -154,6 +160,57 @@ export function createOrgRepo(db: Database, deps: RepoDeps): OrgRepo {
 
         return { org, membership: toMembership(membershipRow!) };
       });
+    },
+
+    /**
+     * §10.12 — an employee account and its membership, in one transaction.
+     *
+     * ⚑ The conflict is decided by the unique index, not by a prior SELECT. Two
+     * admins creating `ahmed` at the same moment both find the name free; only the
+     * constraint can pick a winner, and catching its violation is how the loser
+     * learns. `23505` is Postgres' unique_violation.
+     */
+    async createEmployee(input) {
+      try {
+        return await db.transaction(async (tx) => {
+          const [userRow] = await tx
+            .insert(users)
+            .values({
+              id: deps.uuid(),
+              // ⚑ No email, ever. An employee has no mailbox here: no verification,
+              // no reset link, and no way to sign in at the apex (§5.3.1).
+              email: null,
+              username: input.username,
+              orgScopeId: input.orgId,
+              name: input.name ?? null,
+              passwordHash: input.passwordHash,
+              passwordAlgo: 'argon2id',
+              passwordUpdatedAt: new Date(),
+              // Active immediately: the owner vouching for them *is* the
+              // verification step an email account gets from its mailbox.
+              status: 'active',
+            })
+            .returning();
+
+          const [membershipRow] = await tx
+            .insert(memberships)
+            .values({
+              id: deps.uuid(),
+              orgId: input.orgId,
+              userId: userRow!.id,
+              roleId: input.roleId,
+              status: 'active',
+              invitedBy: input.createdBy,
+              joinedAt: new Date(),
+            })
+            .returning();
+
+          return { user: toUser(userRow!), membership: toMembership(membershipRow!) };
+        });
+      } catch (error) {
+        if (isUniqueViolation(error)) return { conflict: 'username_taken' as const };
+        throw error;
+      }
     },
 
     async findById(id) {

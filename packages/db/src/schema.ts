@@ -26,6 +26,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  check,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { bytea, citext } from './types.js';
@@ -115,6 +116,23 @@ export const users = pgTable(
     /** Nullable: passkey-only and SSO-only accounts have no address of their own. */
     email: citext('email'),
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+
+    /**
+     * The other identity (§10.12): a username an owner hands to an employee, who
+     * signs in at their organization's own subdomain and never has a mailbox.
+     */
+    username: citext('username'),
+    /**
+     * ⚑ Which organization that username belongs to — and it is *not* redundant
+     * with `auth_memberships`.
+     *
+     * Uniqueness has to be the database's job, and `unique (username)` across the
+     * instance would let the first tenant to take `ahmed` take it from everyone
+     * else. A unique index cannot reach through the membership table to find out
+     * which org a row belongs to, so the scope lives here, beside the name it
+     * scopes.
+     */
+    orgScopeId: uuid('org_scope_id').references(() => orgs.id, { onDelete: 'cascade' }),
     /** E.164, only populated when the SMS OTP channel is enabled. */
     phone: text('phone'),
     phoneVerifiedAt: timestamp('phone_verified_at', { withTimezone: true }),
@@ -144,7 +162,29 @@ export const users = pgTable(
   (t) => [
     uniqueIndex('uq_users_email').on(t.email),
     uniqueIndex('uq_users_phone').on(t.phone),
+    /** ⚑ Per organization, not per instance — see `orgScopeId` above. */
+    uniqueIndex('uq_users_org_username').on(t.orgScopeId, t.username),
     index('idx_users_status_live').on(t.status).where(sql`deleted_at IS NULL`),
+    /**
+     * ⚑ A username with no scope is unaddressable — nothing could ever look it up
+     * — and a scope with no username is meaningless. The pair travels together or
+     * not at all; it is the sort of state a bulk import produces and nobody
+     * notices until someone tries to sign in.
+     */
+    check(
+      'ck_users_username_scoped',
+      sql`(username IS NULL) = (org_scope_id IS NULL)`,
+    ),
+    /**
+     * ⚑ There is deliberately **no** `email IS NOT NULL OR username IS NOT NULL`
+     * check, and the first version of this migration had one.
+     *
+     * It reads as obviously correct — an account with neither cannot sign in — and
+     * it is wrong: a passkey-only or SSO-only account (§4.1, §5.10) has neither.
+     * Its identity lives in `auth_identities`, and the row here is the anchor those
+     * rows point at. The schema integration test says so in as many words, which is
+     * how the constraint lasted about four minutes.
+     */
   ],
 );
 

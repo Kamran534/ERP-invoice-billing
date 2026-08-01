@@ -36,20 +36,6 @@ export async function register(
 
   const existing = await ctx.repos.users.findByEmail(email);
   if (existing) {
-    // Tell the real owner that someone tried, and tell the caller nothing.
-    await ctx.mailer.send({
-      to: email,
-      subject: `Someone tried to register with your email — ${ctx.config.appName}`,
-      text:
-        `Someone entered this address when signing up to ${ctx.config.appName}, but an ` +
-        `account already exists.\n\nIf that was you, sign in instead — or reset your ` +
-        `password if you have forgotten it. If it wasn't, you can ignore this message.`,
-      html:
-        `<p>Someone entered this address when signing up to ${ctx.config.appName}, but an ` +
-        `account already exists.</p><p>If that was you, sign in instead — or reset your ` +
-        `password if you have forgotten it. If it wasn't, you can ignore this message.</p>`,
-    });
-
     await audit(ctx, {
       event: 'user.registered',
       actorType: 'system',
@@ -57,6 +43,43 @@ export async function register(
       ip: input.ip,
       userAgent: input.userAgent,
       metadata: { reason: 'email_taken' },
+    });
+
+    /**
+     * ⚑ The deployment's choice, made explicit at boot rather than here.
+     *
+     * `false` (the default) is §5.1's enumeration resistance: identical body,
+     * identical status, identical *timing* — which is why the password was hashed
+     * above before this lookup ran. The person who learns anything is the account
+     * holder, by email; the caller learns nothing.
+     *
+     * `true` tells the caller directly. It costs the guarantee — `/auth/register`
+     * becomes an oracle for "does this address have an account" — and buys the
+     * usability: someone who forgot they signed up is otherwise told to watch an
+     * inbox for a link that never comes.
+     */
+    if (ctx.config.registration.revealExistingAccount) {
+      throw new AuthError(
+        'CONFLICT',
+        'An account already exists for this email address',
+        { details: { field: 'email' } },
+      );
+    }
+
+    // Tell the real owner that someone tried, and tell the caller nothing.
+    await ctx.mailer.send({
+      to: email,
+      subject: `Someone tried to register with your email — ${ctx.config.appName}`,
+      text:
+        `Someone entered this address when signing up to ${ctx.config.appName}, but an ` +
+        `account already exists.
+
+If that was you, sign in instead — or reset your ` +
+        `password if you have forgotten it. If it wasn't, you can ignore this message.`,
+      html:
+        `<p>Someone entered this address when signing up to ${ctx.config.appName}, but an ` +
+        `account already exists.</p><p>If that was you, sign in instead — or reset your ` +
+        `password if you have forgotten it. If it wasn't, you can ignore this message.</p>`,
     });
 
     return { status: 'verification_sent' };

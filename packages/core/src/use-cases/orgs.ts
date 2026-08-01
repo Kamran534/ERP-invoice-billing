@@ -12,6 +12,7 @@ import { AuthError, errors } from '../errors.js';
 import { audit, emit, type AuthContext, type RequestContext } from '../context.js';
 import type { MembershipView, Org, OrgId, OrgProfile, UserId } from '../ports.js';
 import type { CryptoDeps } from './deps.js';
+import { checkSlug, normaliseSlug } from '../slug.js';
 
 /** What a token needs to know about the caller's tenant. */
 export interface ResolvedAccess {
@@ -146,7 +147,27 @@ export async function createOrganization(
 
   const name = input.name.trim();
   const slug = normaliseSlug(input.slug ?? name);
-  if (!slug) throw new AuthError('VALIDATION_FAILED', 'Organization name must contain a letter or digit');
+
+  // ⚑ §10.13 — the slug is this tenant's subdomain from here on, so it is checked
+  // against DNS rules and the reserved list *before* the insert. A tenant that
+  // exists at a name nobody can resolve is a support ticket the database cannot
+  // undo, because the slug is not editable afterwards.
+  const problem = checkSlug(slug);
+  if (problem === 'empty') {
+    throw new AuthError('VALIDATION_FAILED', 'Organization name must contain a letter or digit', {
+      details: { field: 'name' },
+    });
+  }
+  if (problem === 'malformed') {
+    throw new AuthError('VALIDATION_FAILED', 'That name cannot be turned into a web address', {
+      details: { field: 'name' },
+    });
+  }
+  if (problem === 'reserved') {
+    throw new AuthError('CONFLICT', 'That name is reserved. Please choose another', {
+      details: { field: 'name' },
+    });
+  }
 
   const result = await ctx.repos.orgs.createWithOwner({
     name,
@@ -184,20 +205,6 @@ export async function createOrganization(
   await emit(ctx, 'org.created', { orgId: result.org.id, ownerId: input.userId });
 
   return { org: result.org, role: ownerRole };
-}
-
-/**
- * Slug from a display name: lowercase, ASCII-ish, no leading or trailing dashes.
- * Uniqueness is the database's job — this only has to be *shaped* like a slug.
- */
-function normaliseSlug(source: string): string {
-  return source
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────────

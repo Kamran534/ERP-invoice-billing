@@ -184,6 +184,50 @@ describe('an address that is already taken', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+describe('an address that is already taken, with revealExistingAccount on', () => {
+  let revealing: AuthContext;
+
+  beforeEach(() => {
+    revealing = buildContext(config({ registration: { revealExistingAccount: true } }));
+  });
+
+  it('tells the caller, in the response', async () => {
+    await signUp({}, revealing);
+    await expectAuthError(signUp({}, revealing), 'CONFLICT');
+    expect(repos.users.all()).toHaveLength(1);
+  });
+
+  it('⚑ says which field, so the form can point at it', async () => {
+    await signUp({}, revealing);
+    const error = await signUp({}, revealing).catch((e: unknown) => e);
+    expect(isAuthError(error) && error.details).toMatchObject({ field: 'email' });
+  });
+
+  it('⚑ sends no email at all', async () => {
+    // The notice exists to tell the account holder something the caller was not
+    // told. Once the caller *is* told, mailing the owner is no longer a security
+    // notice — it is a message anyone can send to any address on demand.
+    await signUp({}, revealing);
+    mailer.sent.length = 0;
+    await signUp({}, revealing).catch(() => {});
+
+    expect(mailer.sent).toHaveLength(0);
+  });
+
+  it('still records the collision, and still hashes first', async () => {
+    await signUp({}, revealing);
+    await signUp({}, revealing).catch(() => {});
+
+    const events = repos.audit.eventsOfType('user.registered');
+    expect(events[1]).toMatchObject({ outcome: 'failure', metadata: { reason: 'email_taken' } });
+  });
+
+  it('is off unless a deployment turns it on', () => {
+    expect(config().registration.revealExistingAccount).toBe(false);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 describe('password policy', () => {
   it('rejects a password below the minimum', async () => {
     await expectAuthError(signUp({ password: 'short' }), 'WEAK_PASSWORD');

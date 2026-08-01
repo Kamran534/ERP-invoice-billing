@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Invoice & Billing — Auth API",
+    "title": "Invoicer — Auth API",
     "version": "0.1.0",
     "license": {
       "name": "UNLICENSED",
@@ -1170,7 +1170,7 @@
         "tags": [
           "Auth · session"
         ],
-        "description": "Creates a pending account and emails a verification link. No session is issued until the address is verified.\n\n⚑ **Enumeration-safe:** if the address is already registered, the response is identical to a successful signup and a \"someone tried to register with your email\" notice goes to the existing owner. Never treat a 202 as proof the account is new.\n\n**Rate limit:** 5 per hour per IP",
+        "description": "Creates a pending account and emails a verification link. No session is issued until the address is verified.\n\n⚑ **Enumeration-safe by default:** if the address is already registered, the response is identical to a successful signup and a \"someone tried to register with your email\" notice goes to the existing owner. Never treat a 202 as proof the account is new.\n\nA deployment may trade that away (`REGISTER_REVEAL_EXISTING`, §5.1), in which case a taken address answers `409 CONFLICT` with `details.field: \"email\"` and no notice is mailed. Clients should handle both: the 409 is the only shape that differs.\n\n**Rate limit:** 5 per hour per IP",
         "requestBody": {
           "required": true,
           "content": {
@@ -1235,6 +1235,54 @@
             }
           },
           "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -2046,6 +2094,20 @@
                     "description": "Email address. Compared case-insensitively.",
                     "example": "ada@example.com"
                   },
+                  "username": {
+                    "description": "An employee's login name (§10.12). Requires `org` — a username is unique only within one organization, so without it the name identifies nobody.",
+                    "example": "ahmed.raza",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "org": {
+                    "description": "The tenant slug, from the subdomain the browser used. ⚑ Passed explicitly and never read from `Host`: this API sits behind a BFF, so its host header belongs to the proxy.",
+                    "example": "acme-billing",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63
+                  },
                   "password": {
                     "type": "string",
                     "minLength": 1,
@@ -2058,7 +2120,6 @@
                   }
                 },
                 "required": [
-                  "email",
                   "password"
                 ]
               }
@@ -2125,6 +2186,16 @@
                                 "emailVerified": {
                                   "type": "boolean"
                                 },
+                                "username": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "name": {
                                   "anyOf": [
                                     {
@@ -2156,6 +2227,7 @@
                                 "id",
                                 "email",
                                 "emailVerified",
+                                "username",
                                 "name",
                                 "status",
                                 "mfaEnrolled",
@@ -2265,6 +2337,16 @@
                                 "emailVerified": {
                                   "type": "boolean"
                                 },
+                                "username": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "name": {
                                   "anyOf": [
                                     {
@@ -2296,6 +2378,7 @@
                                 "id",
                                 "email",
                                 "emailVerified",
+                                "username",
                                 "name",
                                 "status",
                                 "mfaEnrolled",
@@ -3563,6 +3646,16 @@
                         "emailVerified": {
                           "type": "boolean"
                         },
+                        "username": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "name": {
                           "anyOf": [
                             {
@@ -3594,6 +3687,7 @@
                         "id",
                         "email",
                         "emailVerified",
+                        "username",
                         "name",
                         "status",
                         "mfaEnrolled",
@@ -3614,6 +3708,19 @@
                             "name": {
                               "type": "string"
                             },
+                            "slug": {
+                              "type": "string"
+                            },
+                            "logoUrl": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "role": {
                               "type": "string"
                             }
@@ -3621,6 +3728,8 @@
                           "required": [
                             "id",
                             "name",
+                            "slug",
+                            "logoUrl",
                             "role"
                           ],
                           "additionalProperties": false
@@ -5953,6 +6062,16 @@
                                 "emailVerified": {
                                   "type": "boolean"
                                 },
+                                "username": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "name": {
                                   "anyOf": [
                                     {
@@ -5984,6 +6103,7 @@
                                 "id",
                                 "email",
                                 "emailVerified",
+                                "username",
                                 "name",
                                 "status",
                                 "mfaEnrolled",
@@ -6093,6 +6213,16 @@
                                 "emailVerified": {
                                   "type": "boolean"
                                 },
+                                "username": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "name": {
                                   "anyOf": [
                                     {
@@ -6124,6 +6254,7 @@
                                 "id",
                                 "email",
                                 "emailVerified",
+                                "username",
                                 "name",
                                 "status",
                                 "mfaEnrolled",
@@ -6887,6 +7018,16 @@
                                 "emailVerified": {
                                   "type": "boolean"
                                 },
+                                "username": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "name": {
                                   "anyOf": [
                                     {
@@ -6918,6 +7059,7 @@
                                 "id",
                                 "email",
                                 "emailVerified",
+                                "username",
                                 "name",
                                 "status",
                                 "mfaEnrolled",
@@ -7027,6 +7169,16 @@
                                 "emailVerified": {
                                   "type": "boolean"
                                 },
+                                "username": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "name": {
                                   "anyOf": [
                                     {
@@ -7058,6 +7210,7 @@
                                 "id",
                                 "email",
                                 "emailVerified",
+                                "username",
                                 "name",
                                 "status",
                                 "mfaEnrolled",
@@ -13825,6 +13978,2904 @@
             }
           },
           "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/orgs/current/employees": {
+      "get": {
+        "operationId": "listEmployees",
+        "summary": "List employee accounts",
+        "tags": [
+          "Auth · session"
+        ],
+        "description": "The username accounts created for this organization. Members who joined by email invitation are listed by `GET /auth/orgs/current/members` instead — the two are different kinds of account, administered differently (§10.12).",
+        "security": [
+          {
+            "cookieAuth": [],
+            "csrfToken": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "employees": {
+                      "type": "array",
+                      "items": {
+                        "title": "Employee",
+                        "type": "object",
+                        "properties": {
+                          "userId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "membershipId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "username": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "invited",
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "accountStatus": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "active",
+                              "suspended",
+                              "deleted"
+                            ]
+                          },
+                          "lastLoginAt": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "userId",
+                          "membershipId",
+                          "username",
+                          "name",
+                          "role",
+                          "status",
+                          "accountStatus",
+                          "lastLoginAt",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "employees"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createEmployee",
+        "summary": "Create an employee account",
+        "tags": [
+          "Auth · session"
+        ],
+        "description": "Creates a username-and-password account inside your organization, active immediately — there is no invitation and no mailbox to confirm, because the person creating it is vouching for the person using it.\n\n⚑ You may only grant a role whose permissions are a subset of your own, and **never** `owner`: the owner is the account that receives the password-reset mail, and an owner without a mailbox is a tenant one forgotten password away from needing a DBA.\n\nThe password is held to the same policy as a signup, breach check included.\n\n**Rate limit:** 60 per hour per IP",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]{1,38}[a-z0-9]$",
+                    "description": "3–40 characters: letters, digits, dot, dash, underscore.",
+                    "example": "ahmed.raza"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Held to the same policy as a signup, breach check included (§8.1)."
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Role key. Must be one you hold yourself, and never `owner`.",
+                    "example": "member"
+                  }
+                },
+                "required": [
+                  "username",
+                  "password",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": [],
+            "csrfToken": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "userId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "membershipId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "username": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "invited",
+                        "active",
+                        "suspended"
+                      ]
+                    },
+                    "accountStatus": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "active",
+                        "suspended",
+                        "deleted"
+                      ]
+                    },
+                    "lastLoginAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "userId",
+                    "membershipId",
+                    "username",
+                    "name",
+                    "role",
+                    "status",
+                    "accountStatus",
+                    "lastLoginAt",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/orgs/current/employees/{id}/password": {
+      "post": {
+        "operationId": "resetEmployeePassword",
+        "summary": "Set an employee's password",
+        "tags": [
+          "Auth · session"
+        ],
+        "description": "For the case the product is actually built around: somebody forgot theirs and there is no mailbox to send a link to.\n\n⚑ Every session that employee holds is revoked. A reset that leaves the old sessions alive is not a reset — it is a second password, and the usual reason for resetting is that the first one is in the wrong hands.\n\n**Rate limit:** 30 per hour per IP",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "cookieAuth": [],
+            "csrfToken": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/orgs/current/employees/{id}": {
+      "patch": {
+        "operationId": "setEmployeeStatus",
+        "summary": "Suspend or restore an employee",
+        "tags": [
+          "Auth · session"
+        ],
+        "description": "⚑ Suspending revokes their sessions as well as flipping the flag. Suspending someone who holds a live access token otherwise suspends them in ten minutes’ time, which is not what anyone means by the word.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "suspended"
+                    ]
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "cookieAuth": [],
+            "csrfToken": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/orgs/current/logo": {
+      "post": {
+        "operationId": "uploadOrgLogo",
+        "summary": "Upload the organization logo",
+        "tags": [
+          "Auth · session"
+        ],
+        "description": "A `multipart/form-data` request with one `file` part. PNG, JPEG, WebP or GIF, up to 2048 KiB.\n\n⚑ The type is determined from the file's own bytes, not from the declared content type or the filename — both of which the caller controls. **SVG is refused**: it is a document format that can carry script, and a browser rendering one from this origin would run it.\n\nThe previous logo is deleted. Returns the organization, with `logoUrl` pointing at the public object store.\n\n**Rate limit:** 30 per hour per IP",
+        "security": [
+          {
+            "cookieAuth": [],
+            "csrfToken": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "title": "Organization",
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "URL-safe, derived from the name and unique across the instance. Not editable.",
+                          "example": "acme-billing"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "suspended"
+                          ]
+                        },
+                        "legalName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "taxId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "phone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logoUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "anyOf": [
+                            {
+                              "title": "OrgAddress",
+                              "type": "object",
+                              "properties": {
+                                "line1": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "line2": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "city": {
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "region": {
+                                  "description": "State, province or county.",
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "postalCode": {
+                                  "type": "string",
+                                  "maxLength": 30
+                                },
+                                "country": {
+                                  "description": "ISO 3166-1 alpha-2, uppercase.",
+                                  "example": "PK",
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 2
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "timezone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "locale": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "slug",
+                        "status",
+                        "legalName",
+                        "taxId",
+                        "email",
+                        "phone",
+                        "website",
+                        "logoUrl",
+                        "address",
+                        "timezone",
+                        "locale",
+                        "currency",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "org"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteOrgLogo",
+        "summary": "Remove the organization logo",
+        "tags": [
+          "Auth · session"
+        ],
+        "description": "Clears `logoUrl` and deletes the stored object.",
+        "security": [
+          {
+            "cookieAuth": [],
+            "csrfToken": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org": {
+                      "title": "Organization",
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "URL-safe, derived from the name and unique across the instance. Not editable.",
+                          "example": "acme-billing"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "suspended"
+                          ]
+                        },
+                        "legalName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "taxId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "phone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logoUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "anyOf": [
+                            {
+                              "title": "OrgAddress",
+                              "type": "object",
+                              "properties": {
+                                "line1": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "line2": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                },
+                                "city": {
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "region": {
+                                  "description": "State, province or county.",
+                                  "type": "string",
+                                  "maxLength": 120
+                                },
+                                "postalCode": {
+                                  "type": "string",
+                                  "maxLength": 30
+                                },
+                                "country": {
+                                  "description": "ISO 3166-1 alpha-2, uppercase.",
+                                  "example": "PK",
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 2
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "timezone": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "locale": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "slug",
+                        "status",
+                        "legalName",
+                        "taxId",
+                        "email",
+                        "phone",
+                        "website",
+                        "logoUrl",
+                        "address",
+                        "timezone",
+                        "locale",
+                        "currency",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "org"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "Stable machine-readable code. Branch on this, not on the message.",
+                          "example": "INVALID_CREDENTIALS"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Developer-facing default. User-facing copy comes from your i18n bundle, keyed by code."
+                        },
+                        "details": {
+                          "description": "Safe, code-specific context. Never contains secrets.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "traceId": {
+                          "type": "string",
+                          "description": "Matches the `x-request-id` response header — quote it in a bug report."
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "traceId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
             "description": "Default Response",
             "content": {
               "application/json": {

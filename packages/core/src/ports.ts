@@ -47,6 +47,10 @@ export interface User {
   id: UserId;
   email: string | null;
   emailVerifiedAt: Date | null;
+  /** §10.12 — an employee's login name, unique within `orgScopeId`, not globally. */
+  username: string | null;
+  /** The organization a `username` belongs to. Null for every email account. */
+  orgScopeId: OrgId | null;
   phone: string | null;
   phoneVerifiedAt: Date | null;
   passwordHash: string | null;
@@ -118,7 +122,21 @@ export interface OtpChallenge {
 export interface UserRepo {
   findById(id: UserId): Promise<User | null>;
   findByEmail(email: string): Promise<User | null>;
-  create(input: Partial<User> & { email: string }): Promise<User>;
+  /**
+   * §10.12 — an employee, within one organization.
+   *
+   * ⚑ Both arguments, always. A username is unique per organization, so looking
+   * one up without a tenant would return whichever tenant happened to be first.
+   */
+  findByUsernameInOrg(orgId: OrgId, username: string): Promise<User | null>;
+  /**
+   * ⚑ One identity or the other, in the type. An account with neither is one the
+   * database refuses (`ck_users_has_identity`), and a union here is what stops a
+   * caller discovering that at runtime.
+   */
+  create(
+    input: Partial<User> & ({ email: string } | { username: string; orgScopeId: OrgId }),
+  ): Promise<User>;
   update(id: UserId, patch: Partial<User>): Promise<User>;
   /** Atomic: increments and locks in one statement so parallel guesses can't outrun it. */
   registerFailedLogin(
@@ -251,6 +269,23 @@ export interface OrgRepo {
     ownerRoleKey: string;
     onlyIfFirst: boolean;
   }): Promise<{ org: Org; membership: Membership } | { conflict: 'not_first' | 'slug_taken' }>;
+
+  /**
+   * §10.12 — an employee account and its membership, in one transaction.
+   *
+   * Together for the same reason as `createWithOwner`: a user row with no
+   * membership is an account that can authenticate and then belongs nowhere, and
+   * the unique index on `(org_scope_id, username)` is the only thing that can
+   * decide a race between two admins typing the same name.
+   */
+  createEmployee(input: {
+    orgId: OrgId;
+    username: string;
+    name?: string | null;
+    passwordHash: string;
+    roleId: string;
+    createdBy: UserId;
+  }): Promise<{ user: User; membership: Membership } | { conflict: 'username_taken' }>;
 
   findById(id: OrgId): Promise<Org | null>;
   findBySlug(slug: string): Promise<Org | null>;
