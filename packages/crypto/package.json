@@ -23,7 +23,7 @@
   "dependencies": {
     "@auth/core": "workspace:*",
     "@node-rs/argon2": "^2.0.2",
-    "jose": "^6.0.0",
+    "jose": "^6.2.6",
     "otpauth": "^9.5.1"
   },
   "devDependencies": {
