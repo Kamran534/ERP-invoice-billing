@@ -34,13 +34,13 @@
   "dependencies": {
     "@auth/core": "workspace:*",
     "drizzle-orm": "^0.44.0",
-    "pg": "^8.13.1"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.10",
+    "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.0",
     "rimraf": "^6.0.1",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   }
